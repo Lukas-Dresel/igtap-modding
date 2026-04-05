@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <AssemblyName>IGTAPFreeplay</AssemblyName>
-    <Description>Freeplay mod: god mode, noclip, infinite abilities, speed tweaks, currency cheats</Description>
+    <Description>Freeplay mod: god mode, noclip, infinite abilities, speed tweaks, currency tools</Description>
   </PropertyGroup>
 
   <ItemGroup>

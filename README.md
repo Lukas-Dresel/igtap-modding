@@ -37,14 +37,14 @@ The foundation plugin that other mods depend on. Provides:
 
 ### Freeplay (`mod-freeplay/`)
 
-Sandbox/cheat mod with BepInEx config entries for everything:
+Sandbox mod with BepInEx config entries for everything:
 
 - Speed/jump multipliers, extra air dashes/jumps, infinite dashes/jumps/wall jumps
 - God mode (immune to death triggers)
 - Noclip fly mode (F10) with configurable speed
 - Hidden spike reveal (renders invisible spike tilemaps as translucent)
 - Player light controls (always-on glow, radius, intensity, color)
-- Currency multiplier and give-cash hotkey (F9)
+- Currency multiplier
 
 ### Dash+ (`mod-dashplus/`)
 

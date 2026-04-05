@@ -55,7 +55,6 @@ namespace IGTAPFreeplay
 
         // Economy
         internal static ConfigEntry<double> CurrencyMultiplier;
-        internal static ConfigEntry<KeyboardShortcut> GiveCashKey;
         internal static ConfigEntry<double> GiveCashAmount;
 
         private static Movement cachedPlayer;
@@ -114,9 +113,6 @@ namespace IGTAPFreeplay
 
             CurrencyMultiplier = Config.Bind("Economy", "CurrencyMultiplier", 1.0,
                 "Multiplier for all currency gains from course completions");
-            GiveCashKey = Config.Bind("Economy", "GiveCashKey",
-                new KeyboardShortcut(KeyCode.F9),
-                "Press this key to give yourself cash");
             GiveCashAmount = Config.Bind("Economy", "GiveCashAmount", 1000000.0,
                 "Amount of cash given when pressing the give-cash key");
 
@@ -128,15 +124,6 @@ namespace IGTAPFreeplay
             FreeplayMenu.Register();
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded!");
-        }
-
-        private void Update()
-        {
-            if (GiveCashKey.Value.IsDown())
-            {
-                globalStats.currencyLookup[globalStats.Currencies.Cash] += GiveCashAmount.Value;
-                Log.LogInfo($"Gave {GiveCashAmount.Value} cash. Total: {globalStats.currencyLookup[globalStats.Currencies.Cash]}");
-            }
         }
 
         private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
