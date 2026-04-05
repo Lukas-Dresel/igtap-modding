@@ -7,17 +7,19 @@ Reverse engineering analysis, modding framework, and level editor tooling for
 
 ```
 igtap/
-├── mod/                  # Core mod (BepInEx plugin) - debug menu, HUD, shared APIs
-├── mod-freeplay/         # Freeplay mod - god mode, noclip, speed tweaks, hidden spike reveal
-├── mod-dashplus/         # Dash+ mod - diagonal and vertical dashing
-├── mod-inputviz/         # Input Viz mod - on-screen input/status overlay
-├── decomp/               # Python scripts for asset extraction and decompilation
-├── docs/                 # Detailed reverse engineering documentation
-├── editor.html           # Browser-based level editor
-├── Directory.Build.props # Shared MSBuild config (game paths, BepInEx/Unity refs)
-├── _common.sh            # Shared shell helpers (game detection, BepInEx install)
-├── build_all.sh          # Build all mods
-└── install_all.sh        # Install all mods to game directory
+├── mod/                         # Core mod (BepInEx plugin) - debug menu, HUD, shared APIs
+├── mod-freeplay/                # Freeplay mod - god mode, noclip, speed tweaks, hidden spike reveal
+├── mod-dashplus/                # Dash+ mod - diagonal and vertical dashing
+├── mod-inputviz/                # Input Viz mod - on-screen input/status overlay
+├── mod-minimap/                 # Minimap mod - in-game map overlay with multiple view modes
+├── mod-IMPORTED-HitboxViewer/   # (Imported) Hitbox Viewer - collision volume visualization
+├── mod-IMPORTED-IGTAS/          # (Imported) IGTAS - tool-assisted speedrun input recording/playback
+├── decomp/                      # Python scripts for asset extraction and decompilation
+├── editor.html                  # Browser-based level editor
+├── Directory.Build.props        # Shared MSBuild config (game paths, BepInEx/Unity refs)
+├── _common.sh                   # Shared shell helpers (game detection, BepInEx install)
+├── build_all.sh                 # Build all mods
+└── install_all.sh               # Install all mods to game directory
 ```
 
 ## Mods
@@ -55,6 +57,34 @@ On-screen input visualization overlay showing:
 
 - Directional input, jump/dash/reset button presses
 - Player state indicators (grounded, on wall, dash/jump availability with counts)
+
+### Minimap (`mod-minimap/`)
+
+In-game minimap/map overlay with real-time tilemap rendering. Features:
+
+- Three view modes: full world, follow player (with configurable zoom), current course
+- Configurable position (screen corner), size, and opacity
+- Toggle with F6, cycle view modes with F5, settings in debug menu (F8)
+
+### Imported Mods
+
+These are third-party mods imported into the repo for convenience. They are standalone BepInEx plugins and do not depend on the core mod.
+
+#### Hitbox Viewer (`mod-IMPORTED-HitboxViewer/`)
+
+Real-time collision volume visualization with color-coded outlines:
+
+- Supports 3D colliders (Box, Sphere, Capsule, CharacterController, Mesh) and 2D colliders (Box, Circle, Polygon)
+- NavMeshObstacle visualization, trigger/non-trigger filtering
+- UniverseLib-powered menu UI (F4)
+
+#### IGTAS (`mod-IMPORTED-IGTAS/`)
+
+Tool-assisted speedrun plugin for frame-precise input recording and playback:
+
+- Record (F6), stop (F7), playback (F8) with slowdown mode (F5)
+- Frame editor with insert/remove/navigate (F9-F11, arrow keys)
+- Saves recorded inputs to files; keyboard-only (no controller support)
 
 ## Decompilation & Asset Extraction (`decomp/`)
 
@@ -114,19 +144,3 @@ Override by passing a path: `./install_all.sh /path/to/game`.
 ```
 ./run_bepinex.sh %command%
 ```
-
-## Documentation
-
-See [`docs/`](docs/README.md) for detailed reverse engineering notes:
-
-- [Game overview](docs/overview.md) - tech stack, key stats
-- [Code structure](docs/code-structure.md) - all 50 decompiled classes
-- [Game mechanics](docs/game-mechanics.md) - movement, clones, upgrades, currencies
-- [Tilemap layers](docs/tilemap-layers.md) - all 38 layers with tile counts
-- [Map layout](docs/map-layout.md) - scene hierarchy, zones, courses
-- [Coordinate system](docs/coordinate-system.md) - world/grid mapping
-- [Rendering](docs/rendering.md) - sprites, camera, lighting, particles
-- [Save system](docs/save-system.md) - SaveableObject pattern, file schemas
-- [File formats](docs/file-formats.md) - Unity binary formats, save data JSON
-- [Editor](docs/editor.md) - browser-based level editor
-- [Demo restrictions](docs/demo-restrictions.md) - what the demo locks down
