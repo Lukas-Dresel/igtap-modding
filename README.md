@@ -11,7 +11,6 @@ igtap/
 ├── mod-freeplay/         # Freeplay mod - god mode, noclip, speed tweaks, hidden spike reveal
 ├── mod-dashplus/         # Dash+ mod - diagonal and vertical dashing
 ├── mod-inputviz/         # Input Viz mod - on-screen input/status overlay
-├── mod-undemo/           # Undemo mod - bypasses demo restrictions
 ├── decomp/               # Python scripts for asset extraction and decompilation
 ├── docs/                 # Detailed reverse engineering documentation
 ├── editor.html           # Browser-based level editor
@@ -56,10 +55,6 @@ On-screen input visualization overlay showing:
 
 - Directional input, jump/dash/reset button presses
 - Player state indicators (grounded, on wall, dash/jump availability with counts)
-
-### Undemo (`mod-undemo/`)
-
-Patches `isDemoBuild` checks to unlock full-game content in the demo build.
 
 ## Decompilation & Asset Extraction (`decomp/`)
 

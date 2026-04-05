@@ -23,12 +23,33 @@ if ! command -v dotnet &>/dev/null; then
     NEED_APT+=(dotnet-sdk-8.0)
 fi
 
+# .NET 10 preview SDK (for imported mods using C# 14)
+if ! dotnet --list-sdks 2>/dev/null | grep -q '^10\.'; then
+    NEED_DOTNET10=true
+else
+    NEED_DOTNET10=false
+fi
+
 if [ ${#NEED_APT[@]} -gt 0 ]; then
     echo "Installing system packages: ${NEED_APT[*]}"
     sudo apt-get update
     sudo apt-get install -y "${NEED_APT[@]}"
 else
     echo "System dependencies OK"
+fi
+
+# --- .NET 10 preview SDK ---
+if $NEED_DOTNET10; then
+    echo ""
+    echo "=== Installing .NET 10 preview SDK (for C# 14 support) ==="
+    curl -sSL https://builds.dotnet.microsoft.com/dotnet/scripts/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+    chmod +x /tmp/dotnet-install.sh
+    /tmp/dotnet-install.sh --channel 10.0 --quality preview --install-dir "$HOME/.dotnet"
+    rm -f /tmp/dotnet-install.sh
+    export PATH="$HOME/.dotnet:$PATH"
+    export DOTNET_ROOT="$HOME/.dotnet"
+else
+    echo ".NET 10 SDK: already installed"
 fi
 
 # --- Python dependencies ---

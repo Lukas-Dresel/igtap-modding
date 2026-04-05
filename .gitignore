@@ -1,5 +1,10 @@
+.history/
+
 mod*/bin/
 mod*/obj/
+
+__pycache__
+*.pyc
 
 # Decompilation-derived data
 decomp/output/

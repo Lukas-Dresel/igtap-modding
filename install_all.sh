@@ -131,7 +131,7 @@ for mod_dir in "$SCRIPT_DIR"/mod*/; do
     if prompt "Install $mod_name?"; then
         echo ""
         bash "$mod_dir/build.sh"
-        cp "$mod_dir/bin/Release/netstandard2.1/$mod_dll" "$PLUGINS_DIR/"
+        cp "$mod_dir"/bin/Release/netstandard2.1/*.dll "$PLUGINS_DIR/"
         echo "  -> Installed $mod_dll"
         installed+=("$mod_name")
     else
