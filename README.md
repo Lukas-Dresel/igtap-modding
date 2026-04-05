@@ -14,8 +14,7 @@ igtap/
 ├── mod-minimap/                 # Minimap mod - in-game map overlay with multiple view modes
 ├── mod-IMPORTED-HitboxViewer/   # (Imported) Hitbox Viewer - collision volume visualization
 ├── mod-IMPORTED-IGTAS/          # (Imported) IGTAS - tool-assisted speedrun input recording/playback
-├── decomp/                      # Python scripts for asset extraction and decompilation
-├── editor.html                  # Browser-based level editor
+├── decomp/                      # Scripts for decompilation
 ├── Directory.Build.props        # Shared MSBuild config (game paths, BepInEx/Unity refs)
 ├── _common.sh                   # Shared shell helpers (game detection, BepInEx install)
 ├── build_all.sh                 # Build all mods
@@ -86,34 +85,15 @@ Tool-assisted speedrun plugin for frame-precise input recording and playback:
 - Frame editor with insert/remove/navigate (F9-F11, arrow keys)
 - Saves recorded inputs to files; keyboard-only (no controller support)
 
-## Decompilation & Asset Extraction (`decomp/`)
+## Decompilation (`decomp/`)
 
-Python 3.11 + [UnityPy](https://github.com/K0lb3/UnityPy) scripts for extracting and processing game data.
-All paths are configured in `config.sh`; output goes to `decomp/output/`.
-
-### Setup & Pipeline
+Scripts for decompiling game assemblies. Paths are configured in `config.sh`; output goes to `decomp/output/`.
 
 | Script | Purpose |
 |--------|---------|
-| `setup.sh` | Install all dependencies: python3.11, UnityPy, Pillow, brotli, lz4, dotnet-sdk-8.0, ilspycmd |
+| `setup.sh` | Install dependencies: dotnet-sdk-8.0, ilspycmd |
 | `config.sh` | Shared config sourced by shell scripts (game dir, data dir, output dir) |
-| `extract_all.sh` | Run the 5-step pipeline: decompile -> dump assets -> extract tilemaps -> extract gameobjects -> parse course data |
-
-### Extraction Scripts
-
-| Script | What it reads | What it produces |
-|--------|---------------|------------------|
-| `decompile.sh` | `Assembly-CSharp.dll` and `Assembly-CSharp-firstpass.dll` via ilspycmd | Decompiled C# source in `output/decompiled/` |
-| `dump_assets.py` | All Unity assets via `UnityPy.load(IGTAP_Data)` | `assets_summary.json` + `.txt`: object type counts, container paths, MonoScript/Texture2D/Sprite/AudioClip/AnimationClip inventories |
-| `extract_tilemaps.py` | All `Tilemap` objects from level files via typetree | Per-level + combined JSON (`tilemaps_level0.json`, `tilemaps_all.json`) with tile positions, sprite/matrix/color indices, and sprite refs |
-| `extract_gameobjects.py` | All `GameObject` and `Transform`/`RectTransform` objects | `gameobjects.json` (flat list with components, transform data, parent/child links) + `gameobject_hierarchy.json` (nested tree from roots) |
-| `extract_sprites.py` | All `Texture2D` and `Sprite` objects | PNGs in `output/textures/` and `output/sprites/` (optional, slow) |
-| `extract_tile_sprites.py` | `Tilemap` sprite arrays, resolving `PPtr<Sprite>` cross-file refs | PNGs organized as `output/tile_sprites/level{N}/{layer}/` + `tile_sprite_map.json` for the editor |
-| `extract_scene_objects.py` | All `SpriteRenderer` objects, walking full transform chains, plus course save data for upgrade box position correction | `scene_objects_level{0,1}.json` with world/grid coords, sprite info, SR fields, transform chains + extracted PNGs in `output/object_sprites/` |
-| `extract_all_objects.py` | Every object of every type via both typetree and OOP API | Per-file per-type JSON dumps in `output/raw_dump/` (full typetrees, no filtering) |
-| `parse_course_data.py` | `StreamingAssets/MenuCourseData.txt` (game's course config JSON) | `MenuCourseData_pretty.json` + `MenuCourseData_analysis.txt` (player path stats, box positions/costs, upgrades, timing data) |
-| `build_editor_data.py` | Reads only from `output/raw_dump/` (no UnityPy) + course save data | `layer_index.json`, per-layer tile data in `output/layers/`, and `scene_objects_level{0,1}.json` — all pre-processed for the browser editor |
-| `patch_demo.py` | `level1` binary file, locating `upgradeBox` MonoBehaviours by path_id and script PPtr | Binary patches `isDemoBuild` byte (offset 316) from 0x01 to 0x00 on 2 gated boxes; supports `--verify` and `--revert` with automatic backup |
+| `decompile.sh` | Decompile `Assembly-CSharp.dll` and `Assembly-CSharp-firstpass.dll` via ilspycmd into `output/decompiled/` |
 
 ## Building & Installing
 
