@@ -1,0 +1,4 @@
+name=IGTAP Minimap
+dll=IGTAPMinimap.dll
+description=Minimap overlay showing terrain, player position, checkpoints and gates. Three view modes: full world, follow player, current course. F6 to toggle, F5 to cycle view modes. Configurable size, position, and opacity
+actions=Build mod-minimap/Minimap.csproj and copy IGTAPMinimap.dll into BepInEx/plugins/

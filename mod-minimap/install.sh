@@ -18,5 +18,5 @@ bash "$SCRIPT_DIR/build.sh"
 
 PLUGINS_DIR="$GAME_DIR/BepInEx/plugins"
 mkdir -p "$PLUGINS_DIR"
-cp "$SCRIPT_DIR/bin/Release/netstandard2.1/IGTAPDashPlus.dll" "$PLUGINS_DIR/"
-echo "Installed IGTAPDashPlus.dll -> $PLUGINS_DIR/"
+cp "$SCRIPT_DIR/bin/Release/netstandard2.1/IGTAPMinimap.dll" "$PLUGINS_DIR/"
+echo "Installed IGTAPMinimap.dll -> $PLUGINS_DIR/"
