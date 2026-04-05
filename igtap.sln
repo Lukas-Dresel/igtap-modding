@@ -22,6 +22,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Freeplay", "mod-freeplay\Fr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DashPlus", "mod-dashplus\DashPlus.csproj", "{A4B03FAB-3E64-FBA6-82F6-D2AF2125FCDE}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "mod-fixedtimestep", "mod-fixedtimestep", "{5BED68D4-490E-443B-99C8-785A5B6FEC80}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FixedTimestep", "mod-fixedtimestep\FixedTimestep.csproj", "{8F879DFC-B029-4C5C-9D64-BB4ED3C5EB82}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -48,6 +52,10 @@ Global
 		{A4B03FAB-3E64-FBA6-82F6-D2AF2125FCDE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A4B03FAB-3E64-FBA6-82F6-D2AF2125FCDE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A4B03FAB-3E64-FBA6-82F6-D2AF2125FCDE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8F879DFC-B029-4C5C-9D64-BB4ED3C5EB82}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8F879DFC-B029-4C5C-9D64-BB4ED3C5EB82}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8F879DFC-B029-4C5C-9D64-BB4ED3C5EB82}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8F879DFC-B029-4C5C-9D64-BB4ED3C5EB82}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -58,6 +66,7 @@ Global
 		{8051A125-DB17-4E79-501A-2AECF1219B66} = {9499E145-4B35-4A7F-3309-E430EDB25159}
 		{302B0A1B-E14C-7C7E-69D0-4B33AD921B2E} = {D0A42781-22C8-1DB3-DE8D-BD44214679D8}
 		{A4B03FAB-3E64-FBA6-82F6-D2AF2125FCDE} = {6584C079-4D82-C063-4270-971606AE084E}
+		{8F879DFC-B029-4C5C-9D64-BB4ED3C5EB82} = {5BED68D4-490E-443B-99C8-785A5B6FEC80}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {989F3B2C-0D03-40DC-9B66-47B713427555}

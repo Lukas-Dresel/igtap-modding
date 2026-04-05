@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>IGTAPFixedTimestep</AssemblyName>
+    <Description>Lock deltaTime to a fixed value for deterministic physics</Description>
+  </PropertyGroup>
+</Project>

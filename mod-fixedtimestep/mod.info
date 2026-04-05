@@ -1,0 +1,4 @@
+name=IGTAP Fixed Timestep
+dll=IGTAPFixedTimestep.dll
+description=Locks Time.deltaTime to a fixed value via Time.captureFramerate for deterministic physics replay
+actions=Build mod-fixedtimestep/FixedTimestep.csproj and copy IGTAPFixedTimestep.dll into BepInEx/plugins/
