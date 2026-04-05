@@ -1,0 +1,7 @@
+<Project>
+  <!-- Block parent Directory.Build.props. Provide game paths for imported builds. -->
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == ''">$(HOME)/.steam/steam/steamapps/common/IGTAP an Incremental Game That's Also a Platformer Demo</GameDir>
+    <ManagedDir>$(GameDir)/IGTAP_Data/Managed</ManagedDir>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,4 @@
+name=HitboxViewer (imported)
+dll=HitboxViewer.dll
+description=Real-time hitbox/collider visualization for Unity games. Press F4 to toggle. Imported from github.com/Rostmoment/HitboxViewer
+actions=Clone & build HitboxViewer from GitHub and copy DLLs into BepInEx/plugins/

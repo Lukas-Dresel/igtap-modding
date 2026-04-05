@@ -1,0 +1,3 @@
+<Project>
+  <!-- Block the parent Directory.Build.props from leaking into the imported repo -->
+</Project>

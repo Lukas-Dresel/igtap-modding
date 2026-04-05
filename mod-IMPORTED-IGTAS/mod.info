@@ -1,0 +1,4 @@
+name=IGTAS (imported)
+dll=IGTAS.dll
+description=Tool-Assisted Speedrun plugin: record, edit, and play back frame-perfect inputs. F6 record, F7 stop, F8 playback, F9 editor. Imported from github.com/pseudo-psychic/IGTAS
+actions=Clone & build IGTAS from GitHub and copy IGTAS.dll into BepInEx/plugins/
