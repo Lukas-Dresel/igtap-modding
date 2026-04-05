@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>IGTAP Level Editor (Raw)</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', monospace; display: flex; height: 100vh; overflow: hidden; }
+#sidebar { width: 280px; min-width: 280px; background: #16213e; border-right: 1px solid #0f3460; display: flex; flex-direction: column; overflow: hidden; }
+#sidebar h2 { padding: 12px; font-size: 14px; background: #0f3460; text-align: center; }
+#layer-list { flex: 1; overflow-y: auto; padding: 4px; }
+.layer-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; border: 1px solid transparent; }
+.layer-item:hover { background: #1a1a2e; }
+.layer-item.active { border-color: #e94560; background: #1a1a2e; }
+.layer-eye { width: 18px; cursor: pointer; text-align: center; font-size: 14px; }
+.layer-eye.hidden { opacity: 0.3; }
+.layer-color { width: 14px; height: 14px; border-radius: 2px; flex-shrink: 0; }
+.layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-count { font-size: 10px; color: #888; }
+#main { flex: 1; display: flex; flex-direction: column; }
+#top-bar { height: 32px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; align-items: center; padding: 0 12px; gap: 12px; font-size: 12px; }
+#canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+canvas { position: absolute; top: 0; left: 0; }
+#status { height: 24px; background: #16213e; border-top: 1px solid #0f3460; padding: 0 12px; font-size: 11px; line-height: 24px; color: #888; }
+#props { width: 240px; min-width: 240px; background: #16213e; border-left: 1px solid #0f3460; overflow-y: auto; padding: 8px; font-size: 12px; }
+#props h3 { margin-bottom: 8px; font-size: 13px; color: #e94560; }
+.prop-row { display: flex; justify-content: space-between; padding: 2px 0; }
+.prop-label { color: #888; }
+.prop-val { color: #e0e0e0; font-family: monospace; }
+#loading { position: fixed; inset: 0; background: #1a1a2e; display: flex; align-items: center; justify-content: center; z-index: 999; flex-direction: column; gap: 12px; font-size: 16px; }
+#loading-bar { width: 300px; height: 8px; background: #0f3460; border-radius: 4px; overflow: hidden; }
+#loading-fill { height: 100%; background: #e94560; width: 0%; transition: width 0.2s; }
+</style>
+</head>
+<body>
+<div id="loading">
+  <div style="font-size:18px;margin-bottom:16px">Loading raw data...</div>
+  <div id="loading-items" style="text-align:left;font-size:13px;width:450px"></div>
+</div>
+<style>
+.load-item { display:flex; align-items:center; gap:8px; margin:4px 0; }
+.load-check { width:18px; text-align:center; }
+.load-name { flex:1; }
+.load-bar-wrap { width:120px; height:6px; background:#0f3460; border-radius:3px; overflow:hidden; }
+.load-bar-fill { height:100%; background:#e94560; width:0%; transition:width 0.1s; }
+.load-size { width:60px; text-align:right; color:#888; font-size:11px; }
+.load-item.done .load-check { color:#4a9; }
+.load-item.done .load-bar-fill { background:#4a9; width:100%; }
+.load-item.parsing .load-bar-fill { background:#ea5; }
+</style>
+
+<div id="sidebar">
+  <h2>IGTAP Level Editor</h2>
+  <div id="top-bar" style="padding:6px;border-bottom:1px solid #0f3460;display:flex;flex-wrap:wrap;gap:4px">
+    <span>Objects: <input type="checkbox" id="objects-toggle" checked></span>
+    <span>Labels: <input type="checkbox" id="labels-toggle" checked></span>
+    <span>Grid: <input type="checkbox" id="grid-toggle"></span>
+  </div>
+  <div id="layer-list"></div>
+</div>
+
+<div id="main">
+  <div style="height:32px;background:#16213e;border-bottom:1px solid #0f3460;display:flex;align-items:center;padding:0 12px;gap:12px;font-size:12px">
+    <span>Zoom: <span id="zoom-label">100%</span></span>
+    <span>Tile: <span id="tile-id-label">-</span></span>
+    <span id="coord-label">-</span>
+  </div>
+  <div id="canvas-wrap"><canvas id="canvas"></canvas></div>
+  <div id="status">Loading...</div>
+</div>
+
+<div id="props"><h3>Properties</h3><div id="props-content">Loading...</div></div>
+
+<script>
+const RAW = 'decomp/output/raw_dump';
+const TILE_SPRITES = 'decomp/output/tile_sprites/level1';
+const OBJ_SPRITES = 'decomp/output/object_sprites';
+
+// ===== DATA =====
+let DB = {}; // all raw data
+let goNames = {};  // path_id -> name
+let tLookup = {};  // transform path_id -> typetree
+let goToT = {};    // go path_id -> transform path_id
+let gridInfoByGo = {}; // grid go_path_id -> {cellSize, pos}
+
+// Processed
+let tilemapLayers = []; // [{name, pathId, goPathId, gridCellSize, gridPos, tiles, matrices, spriteFileIds}]
+let sceneObjects = [];  // [{name, x, y, worldX, worldY, scaleX, scaleY, rotZ, sprite, ...}]
+
+// Editor state
+let layerVisible = {};
+let activeLayerIdx = -1;
+let cam = { x: 300, y: 200, zoom: 2 };
+let isDragging = false, dragStart = {x:0,y:0}, camStart = {x:0,y:0};
+let canvas, ctx, W, H;
+let hoverTile = null, selectedObj = null;
+let spriteImages = {}; // path -> Image | null (loading)
+let renderQueued = false;
+
+// ===== LOADING =====
+async function loadAll() {
+  const files = [
+    { name: 'Grids',           url: RAW+'/level1__Grid.json' },
+    { name: 'Transforms',      url: RAW+'/level1__Transform.json' },
+    { name: 'RectTransforms',  url: RAW+'/level1__RectTransform.json' },
+    { name: 'GameObjects',     url: RAW+'/level1__GameObject.json' },
+    { name: 'SpriteRenderers', url: RAW+'/level1__SpriteRenderer.json' },
+    { name: 'Sprite Index',    url: RAW+'/sprite_index.json' },
+    { name: 'Tilemaps',        url: RAW+'/tilemap_compact.json' },
+    { name: 'TilemapRenderers',url: RAW+'/level1__TilemapRenderer.json' },
+  ];
+
+  // Build loading UI
+  const container = document.getElementById('loading-items');
+  for (const f of files) {
+    const div = document.createElement('div');
+    div.className = 'load-item';
+    div.id = 'load-' + f.name.replace(/ /g,'_');
+    div.innerHTML = `<span class="load-check">-</span><span class="load-name">${f.name}</span><div class="load-bar-wrap"><div class="load-bar-fill"></div></div><span class="load-size"></span>`;
+    container.appendChild(div);
+    f.el = div;
+  }
+
+  function loadWithProgress(f) {
+    return fetch(f.url).then(resp => {
+      const total = +resp.headers.get('Content-Length') || 0;
+      if (total) f.el.querySelector('.load-size').textContent = (total/1024/1024).toFixed(1)+'MB';
+      const reader = resp.body.getReader();
+      let received = 0;
+      const chunks = [];
+      const bar = f.el.querySelector('.load-bar-fill');
+      return new ReadableStream({
+        start(controller) {
+          function pump() {
+            return reader.read().then(({done, value}) => {
+              if (done) { controller.close(); return; }
+              received += value.length;
+              if (total) bar.style.width = (received/total*100)+'%';
+              chunks.push(value);
+              controller.enqueue(value);
+              return pump();
+            });
+          }
+          return pump();
+        }
+      });
+    }).then(stream => new Response(stream))
+      .then(r => {
+        f.el.classList.add('parsing');
+        f.el.querySelector('.load-check').textContent = '...';
+        return r.json();
+      })
+      .then(data => {
+        f.el.classList.remove('parsing');
+        f.el.classList.add('done');
+        f.el.querySelector('.load-check').textContent = '\u2713';
+        f.el.querySelector('.load-bar-fill').style.width = '100%';
+        return data;
+      });
+  }
+
+  const results = await Promise.all(files.map(f => loadWithProgress(f)));
+  const [grids, transforms, rectTransforms, gameObjects, spriteRenderers, spriteIdx, tilemaps, tilemapRenderers] = results;
+
+  document.getElementById('loading-items').insertAdjacentHTML('beforeend',
+    '<div class="load-item" id="load-proc"><span class="load-check">...</span><span class="load-name">Processing...</span></div>');
+
+  // Build GO name lookup
+  for (const go of gameObjects) {
+    const tt = go.typetree || {};
+    goNames[go.path_id] = tt.m_Name || go.m_Name || '?';
+  }
+
+  // Build transform lookup
+  for (const t of transforms.concat(rectTransforms)) {
+    const tt = t.typetree || {};
+    tLookup[t.path_id] = tt;
+    const goPid = (tt.m_GameObject||{}).m_PathID || 0;
+    if (goPid) goToT[goPid] = t.path_id;
+  }
+
+  // Build grid lookup
+  for (const g of grids) {
+    const tt = g.typetree || {};
+    const goPid = (tt.m_GameObject||{}).m_PathID || 0;
+    const cs = tt.m_CellSize || {x:32,y:32};
+    // Get grid world position from its transform
+    const tid = goToT[goPid];
+    const ttt = tLookup[tid] || {};
+    const pos = ttt.m_LocalPosition || {x:0,y:0};
+    gridInfoByGo[goPid] = { cellX: cs.x, cellY: cs.y, posX: pos.x, posY: pos.y };
+  }
+
+  // Build sprite metadata lookup from pre-indexed data
+  // Keys are path_id strings, values have: n(name), w(width), h(height), p(ppu), px(pivotX), py(pivotY)
+  for (const [pid, s] of Object.entries(spriteIdx)) {
+    spriteInfo[+pid] = {
+      name: s.n || '', w: s.w||0, h: s.h||0,
+      ppu: s.p || 1, pivotX: s.px ?? 0.5, pivotY: s.py ?? 0.5,
+    };
+  }
+
+  // ===== PROCESS TILEMAPS =====
+  const PRIMARY_CELL = 32;
+  // Find primary grid (the one named "Grid")
+  let primaryGridPos = {x:0, y:0};
+  for (const goPid in gridInfoByGo) {
+    if (goNames[goPid] === 'Grid') {
+      primaryGridPos = {x: gridInfoByGo[goPid].posX, y: gridInfoByGo[goPid].posY};
+    }
+  }
+  DB.primaryGridPos = primaryGridPos; // (0, -23)
+
+  for (const tm of tilemaps) {
+    const goPid = tm.go;
+    const goName = goNames[goPid] || '?';
+
+    // Find parent Grid by walking up transforms
+    const gridInfo = findParentGrid(goPid);
+    const cellX = gridInfo.cellX, cellY = gridInfo.cellY;
+
+    // Get the tilemap GO's FULL world position (including its own transform + parents)
+    // This is critical - the tilemap's transform offsets all tile positions
+    const tmWorld = walkHierarchy(goPid);
+
+    // Matrices (already compact: [e00, e01, e10, e11])
+    const matrices = tm.mats || [];
+
+    // Tiles: compact format [x, y, spriteIdx, matIdx, colorIdx, allFlags]
+    // world = tile_cell * cellSize + tilemap_world_position
+    // display_grid = (world - primaryGridPos) / PRIMARY_CELL
+    const rawTiles = tm.tiles || [];
+    const tiles = [];
+    for (const t of rawTiles) {
+      const worldX = t[0] * cellX + tmWorld.wx;
+      const worldY = t[1] * cellY + tmWorld.wy;
+      const dispX = (worldX - primaryGridPos.x) / PRIMARY_CELL;
+      const dispY = (worldY - primaryGridPos.y) / PRIMARY_CELL;
+      tiles.push({
+        x: dispX, y: dispY,
+        si: t[2], mi: t[3], ci: t[4], fl: t[5],
+      });
+    }
+
+    const tileSizeX = cellX / PRIMARY_CELL;
+    const tileSizeY = cellY / PRIMARY_CELL;
+
+    // Sprite PNG path mapping
+    const spriteArr = tm.spr || [];
+    const spriteMap = {};
+    const safeName = goName.replace(/ /g,'_').replace(/[()]/g,'');
+    for (let i = 0; i < spriteArr.length; i++) {
+      const pid = spriteArr[i].pid || 0;
+      if (pid && spriteInfo[pid]) {
+        spriteMap[i] = TILE_SPRITES + '/' + safeName + '/' + i + '.png';
+      }
+    }
+
+    tilemapLayers.push({
+      name: goName, pathId: tm.pid, goPathId: goPid,
+      cellX, cellY, tileSizeX, tileSizeY,
+      enabled: tm.enabled, tmColor: tm.color,
+      tiles, matrices, spriteMap, colorArray: tm.colors || [],
+      tileCount: tiles.length,
+      sortingOrder: 0,
+    });
+  }
+
+  // Build GO -> sortingOrder from TilemapRenderer data
+  const tmrSortByGo = {};
+  for (const tmr of tilemapRenderers) {
+    const tt = tmr.typetree || {};
+    const goPid = (tt.m_GameObject||{}).m_PathID || 0;
+    if (goPid) tmrSortByGo[goPid] = tt.m_SortingOrder || 0;
+  }
+  for (const L of tilemapLayers) {
+    if (tmrSortByGo[L.goPathId] !== undefined) L.sortingOrder = tmrSortByGo[L.goPathId];
+  }
+  tilemapLayers.sort((a, b) => a.sortingOrder - b.sortingOrder);
+
+  // ===== PROCESS SCENE OBJECTS =====
+  for (const sr of spriteRenderers) {
+    const tt = sr.typetree || {};
+    const goPid = (tt.m_GameObject||{}).m_PathID || 0;
+    const name = goNames[goPid] || '?';
+
+    // Walk hierarchy for world position, scale, rotation
+    const hw = walkHierarchy(goPid);
+
+    // Convert world to display grid
+    const dispX = (hw.wx - primaryGridPos.x) / PRIMARY_CELL;
+    const dispY = (hw.wy - primaryGridPos.y) / PRIMARY_CELL;
+
+    // Sprite info
+    const spRef = tt.m_Sprite || {};
+    const spPid = spRef.m_PathID || 0;
+    const si = spriteInfo[spPid] || {};
+    let spriteFile = null;
+    if (si.name) {
+      const safe = si.name.replace(/\//g,'_').replace(/ /g,'_');
+      spriteFile = OBJ_SPRITES + '/' + safe + '.png';
+    }
+
+    sceneObjects.push({
+      name, goPathId: goPid,
+      x: dispX, y: dispY, worldX: hw.wx, worldY: hw.wy,
+      scaleX: hw.sx, scaleY: hw.sy, rotZ: hw.rz,
+      srEnabled: tt.m_Enabled !== undefined ? tt.m_Enabled : 1,
+      srColor: tt.m_Color || {r:1,g:1,b:1,a:1},
+      srFlipX: tt.m_FlipX || false, srFlipY: tt.m_FlipY || false,
+      srDrawMode: tt.m_DrawMode || 0,
+      srSize: tt.m_Size || null,
+      srSortingOrder: tt.m_SortingOrder || 0,
+      sprite: spriteFile, spriteName: si.name || null,
+      spriteW: si.w || null, spriteH: si.h || null,
+      spritePPU: si.ppu || 1, pivotX: si.pivotX ?? 0.5, pivotY: si.pivotY ?? 0.5,
+    });
+  }
+
+  document.getElementById('loading').style.display = 'none';
+  setStatus(`Loaded: ${tilemapLayers.length} tilemap layers, ${sceneObjects.length} scene objects, ${Object.keys(spriteInfo).length} sprites`);
+  initEditor();
+}
+
+function findParentGrid(goPid) {
+  let tid = goToT[goPid];
+  const visited = new Set();
+  while (tid && !visited.has(tid)) {
+    visited.add(tid);
+    const tt = tLookup[tid];
+    if (!tt) break;
+    const parentGo = (tt.m_GameObject||{}).m_PathID || 0;
+    if (gridInfoByGo[parentGo]) return gridInfoByGo[parentGo];
+    const father = tt.m_Father || {};
+    tid = father.m_PathID || 0;
+  }
+  // Default: primary grid
+  return { cellX: 32, cellY: 32, posX: 0, posY: -23 };
+}
+
+function walkHierarchy(goPid) {
+  let tid = goToT[goPid];
+  let wx = 0, wy = 0, sx = 1, sy = 1, rz = 0;
+  const visited = new Set();
+  while (tid && !visited.has(tid)) {
+    visited.add(tid);
+    const tt = tLookup[tid];
+    if (!tt) break;
+    const lp = tt.m_LocalPosition || {};
+    const ls = tt.m_LocalScale || {x:1,y:1};
+    const lr = tt.m_LocalRotation || {x:0,y:0,z:0,w:1};
+    wx += lp.x || 0;
+    wy += lp.y || 0;
+    sx *= (ls.x !== undefined ? ls.x : 1);
+    sy *= (ls.y !== undefined ? ls.y : 1);
+    rz += Math.atan2(2*((lr.w||1)*(lr.z||0)+(lr.x||0)*(lr.y||0)), 1-2*((lr.y||0)**2+(lr.z||0)**2)) * 180/Math.PI;
+    const father = tt.m_Father || {};
+    tid = father.m_PathID || 0;
+  }
+  return { wx, wy, sx, sy, rz };
+}
+
+// ===== EDITOR =====
+const LAYER_COLORS = {
+  'ground':'#4a9eff','Spikes':'#ff4444','hiddenSpikes':'#ff6666','blueSpikes':'#4488ff',
+  'orangeSpikes':'#ff8844','blueBlocks':'#2266dd','orangeBlocks':'#dd8822','Background':'#335566',
+  'Environmental objects':'#44aa66','Environmental objects_back':'#337744',
+  'environmentalObjects_front':'#66cc88','Ilusorywalls':'#aa44aa','InvisibleWall':'#884488',
+  'lightBlocker':'#666633','OOB areas':'#333333','moss':'#556633',
+  'Tree1Ground':'#228833','Tree2Ground':'#33aa44','Tree3Ground':'#44cc55',
+  'backgroundSpikes1':'#cc6666','backgroundSpikes2':'#cc6666',
+};
+
+function initEditor() {
+  canvas = document.getElementById('canvas');
+  ctx = canvas.getContext('2d');
+  resize();
+  window.addEventListener('resize', resize);
+  canvas.addEventListener('wheel', onWheel, {passive:false});
+  canvas.addEventListener('mousedown', onMouseDown);
+  canvas.addEventListener('mousemove', onMouseMove);
+  canvas.addEventListener('mouseup', ()=>{ isDragging=false; canvas.style.cursor=''; });
+  canvas.addEventListener('mouseleave', ()=>{ isDragging=false; });
+  canvas.addEventListener('contextmenu', e=>e.preventDefault());
+  document.addEventListener('keydown', onKeyDown);
+
+  // Build layer list
+  const list = document.getElementById('layer-list');
+  for (let i = 0; i < tilemapLayers.length; i++) {
+    const L = tilemapLayers[i];
+    layerVisible[i] = true;
+    const color = LAYER_COLORS[L.name] || '#7799aa';
+    const div = document.createElement('div');
+    div.className = 'layer-item';
+    div.dataset.idx = i;
+    div.innerHTML = `<span class="layer-eye" data-idx="${i}">&#128065;</span><span class="layer-color" style="background:${color}"></span><span class="layer-name" title="${L.name}">${L.name}</span><span class="layer-count">${L.tileCount.toLocaleString()}</span>`;
+    div.addEventListener('click', e => { if (!e.target.classList.contains('layer-eye')) { activeLayerIdx=i; updateLayerUI(); queueRender(); }});
+    div.querySelector('.layer-eye').addEventListener('click', () => { layerVisible[i]=!layerVisible[i]; updateLayerUI(); queueRender(); });
+    list.appendChild(div);
+  }
+  updateLayerUI();
+
+  // Center on content
+  let allX = [], allY = [];
+  for (const L of tilemapLayers) { for (const t of L.tiles.slice(0,1000)) { allX.push(t.x); allY.push(t.y); }}
+  if (allX.length) {
+    cam.x = (Math.min(...allX)+Math.max(...allX))/2;
+    cam.y = (Math.min(...allY)+Math.max(...allY))/2;
+    cam.zoom = Math.min(W/(Math.max(...allX)-Math.min(...allX)+20), H/(Math.max(...allY)-Math.min(...allY)+20));
+  }
+  queueRender();
+}
+
+function updateLayerUI() {
+  document.querySelectorAll('.layer-item').forEach(el => {
+    const i = +el.dataset.idx;
+    el.classList.toggle('active', i===activeLayerIdx);
+    el.querySelector('.layer-eye').classList.toggle('hidden', !layerVisible[i]);
+  });
+}
+
+function resize() {
+  const wrap = document.getElementById('canvas-wrap');
+  W = wrap.clientWidth; H = wrap.clientHeight;
+  canvas.width = W; canvas.height = H;
+  queueRender();
+}
+
+function queueRender() { if(!renderQueued){renderQueued=true;requestAnimationFrame(()=>{renderQueued=false;render();});}}
+
+// ===== COORDINATE CONVERSION =====
+function screenToWorld(sx, sy) { return { x:(sx-W/2)/cam.zoom+cam.x, y:-(sy-H/2)/cam.zoom+cam.y }; }
+function worldToScreen(wx, wy) { return { x:(wx-cam.x)*cam.zoom+W/2, y:-(wy-cam.y)*cam.zoom+H/2 }; }
+
+// ===== INPUT =====
+function onWheel(e) {
+  e.preventDefault();
+  const f = e.deltaY>0?0.85:1.18;
+  const old = cam.zoom;
+  cam.zoom = Math.max(0.05,Math.min(200,cam.zoom*f));
+  const w = screenToWorld(e.offsetX,e.offsetY);
+  cam.x += (w.x-cam.x)*(1-old/cam.zoom);
+  cam.y += (w.y-cam.y)*(1-old/cam.zoom);
+  document.getElementById('zoom-label').textContent = Math.round(cam.zoom*100)+'%';
+  queueRender();
+}
+function onMouseDown(e) {
+  if (e.button===1||e.button===2) { isDragging=true; dragStart={x:e.offsetX,y:e.offsetY}; camStart={x:cam.x,y:cam.y}; canvas.style.cursor='grabbing'; return; }
+  const w = screenToWorld(e.offsetX,e.offsetY);
+  hoverTile = {x:Math.floor(w.x),y:Math.floor(w.y)};
+  // Check scene objects
+  let best=null, bestD=4;
+  for (const o of sceneObjects) { const d=(o.x-w.x)**2+(o.y-w.y)**2; if(d<bestD){bestD=d;best=o;} }
+  selectedObj = best;
+  updateProps();
+  queueRender();
+}
+function onMouseMove(e) {
+  const w = screenToWorld(e.offsetX,e.offsetY);
+  hoverTile = {x:Math.floor(w.x),y:Math.floor(w.y)};
+  document.getElementById('coord-label').textContent = `(${hoverTile.x}, ${hoverTile.y})`;
+  if (isDragging) {
+    cam.x = camStart.x-(e.offsetX-dragStart.x)/cam.zoom;
+    cam.y = camStart.y+(e.offsetY-dragStart.y)/cam.zoom;
+    queueRender();
+  }
+}
+function onKeyDown(e) {
+  const P=20/cam.zoom;
+  switch(e.key){
+    case'ArrowLeft':case'a':cam.x-=P;queueRender();break;
+    case'ArrowRight':case'd':cam.x+=P;queueRender();break;
+    case'ArrowUp':case'w':cam.y+=P;queueRender();break;
+    case'ArrowDown':case's':cam.y-=P;queueRender();break;
+  }
+}
+
+// ===== SPRITE LOADING =====
+function getSprite(path) {
+  if (!path) return null;
+  if (spriteImages[path] !== undefined) {
+    const img = spriteImages[path];
+    return (img && img.complete && img.naturalWidth>0) ? img : null;
+  }
+  const img = new Image();
+  img.onload = () => queueRender();
+  img.onerror = () => { spriteImages[path] = null; };
+  img.src = path;
+  spriteImages[path] = img;
+  return null;
+}
+
+// ===== PROPERTIES =====
+function updateProps() {
+  const el = document.getElementById('props-content');
+  let h = '';
+  if (selectedObj) {
+    const o = selectedObj;
+    h += `<h3>${o.name}</h3>`;
+    h += prop('Grid',`(${o.x.toFixed(1)}, ${o.y.toFixed(1)})`);
+    h += prop('World',`(${o.worldX.toFixed(0)}, ${o.worldY.toFixed(0)})`);
+    h += prop('Scale',`(${o.scaleX.toFixed(2)}, ${o.scaleY.toFixed(2)})`);
+    h += prop('Rot',`${o.rotZ.toFixed(1)}\u00B0`);
+    h += prop('Sort',o.srSortingOrder);
+    h += prop('DrawMode',o.srDrawMode);
+    if (o.spriteName) h += prop('Sprite',o.spriteName);
+    if (o.spriteW) h += prop('Size',`${o.spriteW}x${o.spriteH} PPU=${o.spritePPU}`);
+    if (o.sprite) h += `<img style="max-width:100%;image-rendering:pixelated;margin-top:8px;border:1px solid #0f3460" src="${o.sprite}" width="128">`;
+  }
+  if (!h) h = 'Click an object to inspect.';
+  el.innerHTML = h;
+}
+function prop(l,v) { return `<div class="prop-row"><span class="prop-label">${l}</span><span class="prop-val">${v}</span></div>`; }
+
+// ===== RENDERING =====
+function render() {
+  if (!ctx) return;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#111122';
+  ctx.fillRect(0,0,W,H);
+
+  const pixSize = cam.zoom;
+  const tl = screenToWorld(0,0), br = screenToWorld(W,H);
+  const vMinX=Math.floor(Math.min(tl.x,br.x))-2, vMaxX=Math.ceil(Math.max(tl.x,br.x))+2;
+  const vMinY=Math.floor(Math.min(tl.y,br.y))-2, vMaxY=Math.ceil(Math.max(tl.y,br.y))+2;
+
+  // Grid lines
+  if (document.getElementById('grid-toggle').checked && cam.zoom>=8) {
+    ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.lineWidth=1;
+    for(let x=vMinX;x<=vMaxX;x++){const s=worldToScreen(x,0);ctx.beginPath();ctx.moveTo(s.x,0);ctx.lineTo(s.x,H);ctx.stroke();}
+    for(let y=vMinY;y<=vMaxY;y++){const s=worldToScreen(0,y);ctx.beginPath();ctx.moveTo(0,s.y);ctx.lineTo(W,s.y);ctx.stroke();}
+  }
+
+  // Origin axes
+  const ox=worldToScreen(0,0);
+  ctx.strokeStyle='rgba(255,80,80,0.25)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(ox.x,0);ctx.lineTo(ox.x,H);ctx.stroke();
+  ctx.strokeStyle='rgba(80,255,80,0.25)';ctx.beginPath();ctx.moveTo(0,ox.y);ctx.lineTo(W,ox.y);ctx.stroke();
+
+  const showObjs = document.getElementById('objects-toggle').checked;
+  const showLabels = document.getElementById('labels-toggle').checked;
+
+  // Scene objects behind tiles (sortingOrder < 0)
+  if (showObjs) renderSceneObjs(sceneObjects.filter(o=>o.srSortingOrder<0), pixSize, vMinX,vMaxX,vMinY,vMaxY, showLabels);
+
+  // Tilemap layers
+  for (let li = 0; li < tilemapLayers.length; li++) {
+    if (!layerVisible[li]) continue;
+    const L = tilemapLayers[li];
+    if (!L.enabled) continue;
+
+    const isActive = li === activeLayerIdx;
+    const tmCol = L.tmColor || {r:1,g:1,b:1,a:1};
+    ctx.globalAlpha = (isActive ? 1.0 : 0.6) * (tmCol.a !== undefined ? tmCol.a : 1);
+    if (ctx.globalAlpha < 0.01) { ctx.globalAlpha=1; continue; } // skip invisible layers
+
+    const fallback = LAYER_COLORS[L.name] || '#7799aa';
+    const tsX = L.tileSizeX, tsY = L.tileSizeY;
+    const tpxW = pixSize * tsX, tpxH = pixSize * tsY;
+
+    for (const t of L.tiles) {
+      if (t.x+tsX < vMinX || t.x > vMaxX || t.y+tsY < vMinY || t.y > vMaxY) continue;
+      const sx = (t.x - cam.x)*cam.zoom + W/2;
+      const sy = -(t.y + tsY - cam.y)*cam.zoom + H/2;
+
+      let drawn = false;
+      if (tpxW >= 3) {
+        const imgPath = L.spriteMap[t.si];
+        const img = getSprite(imgPath);
+        if (img) {
+          ctx.imageSmoothingEnabled = tpxW < 16;
+          const mat = L.matrices[t.mi];
+          const hasMatrix = mat && !(mat[0]===1&&mat[1]===0&&mat[2]===0&&mat[3]===1);
+
+          if (hasMatrix) {
+            const cx=sx+tpxW/2, cy=sy+tpxH/2;
+            ctx.save();
+            ctx.translate(cx,cy);
+            // Matrix transform: Unity->Canvas Y-flip: a=e00, b=-e10, c=-e01, d=e11
+            ctx.transform(mat[0],-mat[2],-mat[1],mat[3],0,0);
+            ctx.drawImage(img,-tpxW/2,-tpxH/2,tpxW,tpxH);
+            ctx.restore();
+          } else {
+            ctx.drawImage(img,sx,sy,tpxW,tpxH);
+          }
+          drawn = true;
+        }
+      }
+      if (!drawn) { ctx.fillStyle=fallback; ctx.fillRect(sx,sy,Math.max(tpxW,1),Math.max(tpxH,1)); }
+    }
+    ctx.globalAlpha=1;
+  }
+
+  // Scene objects in front (sortingOrder >= 0)
+  if (showObjs) renderSceneObjs(sceneObjects.filter(o=>o.srSortingOrder>=0), pixSize, vMinX,vMaxX,vMinY,vMaxY, showLabels);
+
+  // Hover
+  if (hoverTile && cam.zoom>=4) {
+    const s=worldToScreen(hoverTile.x,hoverTile.y+1);
+    ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=2;
+    ctx.strokeRect(s.x,s.y,pixSize,pixSize);
+  }
+  // Selection
+  if (selectedObj) {
+    const s=worldToScreen(selectedObj.x,selectedObj.y);
+    ctx.strokeStyle='#ff44ff';ctx.lineWidth=2;
+    const sz=Math.max(pixSize*2,10);
+    ctx.strokeRect(s.x-sz/2,s.y-sz/2,sz,sz);
+  }
+}
+
+function renderSceneObjs(objs, pixSize, vMinX,vMaxX,vMinY,vMaxY, showLabels) {
+  for (const o of objs) {
+    if (!o.srEnabled) continue;
+    if (o.x<vMinX-20||o.x>vMaxX+20||o.y<vMinY-20||o.y>vMaxY+20) continue;
+    const s = worldToScreen(o.x, o.y);
+    const img = getSprite(o.sprite);
+    const alpha = (o.srColor&&o.srColor.a!==undefined)?o.srColor.a:1;
+    ctx.globalAlpha = alpha*0.9;
+
+    if (img) {
+      const asx=Math.abs(o.scaleX||1), asy=Math.abs(o.scaleY||1);
+      const ppu=o.spritePPU||1;
+      let gw,gh;
+      if ((o.srDrawMode===1||o.srDrawMode===2)&&o.srSize) {
+        gw=(o.srSize.x||1)*asx/32; gh=(o.srSize.y||1)*asy/32;
+      } else {
+        gw=(o.spriteW||img.naturalWidth)*asx/ppu/32;
+        gh=(o.spriteH||img.naturalHeight)*asy/ppu/32;
+      }
+      const dw=gw*pixSize, dh=gh*pixSize;
+      const flipX=(o.scaleX||1)<0||o.srFlipX, flipY=(o.scaleY||1)<0||o.srFlipY;
+
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      if (o.rotZ) ctx.rotate(-o.rotZ*Math.PI/180);
+      if (flipX||flipY) ctx.scale(flipX?-1:1, flipY?-1:1);
+      const sr=o.srColor;
+      if(sr&&(sr.r<0.99||sr.g<0.99||sr.b<0.99)) ctx.globalAlpha*=Math.min(sr.r,sr.g,sr.b,1);
+      ctx.imageSmoothingEnabled = pixSize<16;
+      ctx.drawImage(img, -o.pivotX*dw, -(1-o.pivotY)*dh, dw, dh);
+      ctx.restore();
+    } else {
+      const sz=Math.max(pixSize*0.6,3);
+      ctx.fillStyle='#ff44ff';
+      ctx.beginPath();
+      ctx.moveTo(s.x,s.y-sz);ctx.lineTo(s.x+sz,s.y);ctx.lineTo(s.x,s.y+sz);ctx.lineTo(s.x-sz,s.y);
+      ctx.closePath();ctx.fill();
+    }
+    if (pixSize>=6 && showLabels) {
+      ctx.globalAlpha=0.85;ctx.fillStyle='#fff';
+      ctx.font=`${Math.max(8,Math.min(12,pixSize*0.5))}px monospace`;
+      ctx.fillText(o.name,s.x-10,s.y-pixSize*0.3);
+    }
+    ctx.globalAlpha=1;
+  }
+}
+
+function setStatus(msg) { document.getElementById('status').textContent=msg; }
+
+loadAll();
+</script>
+</body>
+</html>

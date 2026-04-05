@@ -1,0 +1,4 @@
+name=IGTAP Freeplay
+dll=IGTAPFreeplay.dll
+description=God mode, noclip fly (F10), infinite dashes/jumps/wall jumps, speed/jump/gravity tweaks, currency cheats (F9), player glow, hidden spike reveal — all controllable from the F8 debug menu. Requires IGTAP Core
+actions=Build mod-freeplay/Freeplay.csproj and copy IGTAPFreeplay.dll into BepInEx/plugins/

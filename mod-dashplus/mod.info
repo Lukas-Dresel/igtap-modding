@@ -1,0 +1,4 @@
+name=IGTAP Dash+
+dll=IGTAPDashPlus.dll
+description=Adds diagonal and vertical dashing. Hold up/down while dashing to dash in 8 directions instead of just left/right
+actions=Build mod-dashplus/DashPlus.csproj and copy IGTAPDashPlus.dll into BepInEx/plugins/

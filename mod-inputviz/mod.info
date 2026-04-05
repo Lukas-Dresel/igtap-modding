@@ -1,0 +1,4 @@
+name=IGTAP Input Viz
+dll=IGTAPInputViz.dll
+description=On-screen input visualization overlay (F7 to toggle). Shows d-pad, action buttons with keybinds, and status indicators (grounded, dash/jump ready). Detects keyboard vs gamepad. Extensible API for other mods
+actions=Build mod-inputviz/InputViz.csproj and copy IGTAPInputViz.dll into BepInEx/plugins/

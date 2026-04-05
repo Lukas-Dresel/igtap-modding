@@ -1,0 +1,4 @@
+name=IGTAP Core
+dll=IGTAPMod.dll
+description=Core framework: debug menu (F8) with DebugMenuAPI for other mods to register UI sections and HUD items
+actions=Build mod/IGTAPMod.csproj and copy IGTAPMod.dll into BepInEx/plugins/

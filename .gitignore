@@ -1,0 +1,6 @@
+mod*/bin/
+mod*/obj/
+
+# Decompilation-derived data
+decomp/output/
+Assembly-CSharp.decompiled.cs
