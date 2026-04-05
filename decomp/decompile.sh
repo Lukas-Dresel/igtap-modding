@@ -12,14 +12,14 @@ if ! [ -f "$ILSPY" ]; then
     exit 1
 fi
 
-# Decompile main game assembly
+# Decompile main game assembly (one file per type, nested by namespace)
 echo "=== Decompiling Assembly-CSharp.dll ==="
-"$ILSPY" "$DATA_DIR/Managed/Assembly-CSharp.dll" -o "$DECOMPILED_DIR/Assembly-CSharp"
+"$ILSPY" -p --nested-directories "$DATA_DIR/Managed/Assembly-CSharp.dll" -o "$DECOMPILED_DIR/Assembly-CSharp"
 echo "  -> $DECOMPILED_DIR/Assembly-CSharp/"
 
-# Decompile firstpass assembly
+# Decompile firstpass assembly (one file per type, nested by namespace)
 echo "=== Decompiling Assembly-CSharp-firstpass.dll ==="
-"$ILSPY" "$DATA_DIR/Managed/Assembly-CSharp-firstpass.dll" -o "$DECOMPILED_DIR/Assembly-CSharp-firstpass"
+"$ILSPY" -p --nested-directories "$DATA_DIR/Managed/Assembly-CSharp-firstpass.dll" -o "$DECOMPILED_DIR/Assembly-CSharp-firstpass"
 echo "  -> $DECOMPILED_DIR/Assembly-CSharp-firstpass/"
 
 echo ""
