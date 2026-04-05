@@ -18,7 +18,7 @@
       <Private>false</Private>
     </Reference>
     <Reference Include="IGTAPMod">
-      <HintPath>$(BepInExDir)/plugins/IGTAPMod.dll</HintPath>
+      <HintPath>../mod/bin/Release/netstandard2.1/IGTAPMod.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
