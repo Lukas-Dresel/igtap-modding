@@ -52,9 +52,11 @@ set "INSTALLED="
 set "SKIPPED="
 
 for /d %%M in ("%SCRIPT_DIR%mod*") do (
-    if exist "%%M\install.bat" if exist "%%M\mod.info" (
-        call :install_mod "%%M"
-        if "!ANSWER!"=="q" goto :summary
+    echo %%~nxM | findstr /i "IMPORTED" >nul || (
+        if exist "%%M\install.bat" if exist "%%M\mod.info" (
+            call :install_mod "%%M"
+            if "!ANSWER!"=="q" goto :summary
+        )
     )
 )
 

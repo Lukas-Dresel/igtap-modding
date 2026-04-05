@@ -104,6 +104,7 @@ installed=()
 skipped=()
 
 for mod_dir in "$SCRIPT_DIR"/mod*/; do
+    case "$(basename "$mod_dir")" in *IMPORTED*) continue ;; esac
     [ -f "$mod_dir/install.sh" ] || continue
     [ -f "$mod_dir/mod.info" ] || continue
 

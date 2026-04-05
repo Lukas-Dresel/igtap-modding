@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 failed=0
 for mod_dir in "$SCRIPT_DIR"/mod*/; do
+    case "$(basename "$mod_dir")" in *IMPORTED*) continue ;; esac
     if [ -f "$mod_dir/build.sh" ]; then
         bash "$mod_dir/build.sh" || failed=1
         echo ""

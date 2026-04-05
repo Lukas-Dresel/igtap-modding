@@ -4,10 +4,12 @@ set "SCRIPT_DIR=%~dp0"
 set "FAILED=0"
 
 for /d %%M in ("%SCRIPT_DIR%mod*") do (
-    if exist "%%M\build.bat" (
-        call "%%M\build.bat"
-        if errorlevel 1 set "FAILED=1"
-        echo.
+    echo %%~nxM | findstr /i "IMPORTED" >nul || (
+        if exist "%%M\build.bat" (
+            call "%%M\build.bat"
+            if errorlevel 1 set "FAILED=1"
+            echo.
+        )
     )
 )
 
