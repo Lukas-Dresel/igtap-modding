@@ -1,0 +1,4 @@
+name=IGTAP Checkpoints
+dll=IGTAPCheckpoint.dll
+description=Custom checkpoint slots: save position (F4), teleport back (F3), cycle slots (F2), override death respawn, JSON persistence. Manageable from the F8 debug menu. Requires IGTAP Core
+actions=Build mod-checkpoint/Checkpoint.csproj and copy IGTAPCheckpoint.dll into BepInEx/plugins/
