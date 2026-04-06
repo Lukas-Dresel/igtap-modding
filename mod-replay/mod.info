@@ -1,0 +1,4 @@
+name=IGTAP Replay
+dll=IGTAPReplay.dll
+description=Record player inputs to an editable text file and replay them deterministically
+actions=Build mod-replay/Replay.csproj and copy IGTAPReplay.dll into BepInEx/plugins/
