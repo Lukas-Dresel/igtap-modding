@@ -22,6 +22,11 @@ namespace IGTAPReplay
         private Mouse virtualMouse;
         private Gamepad virtualGamepad;
         private Mouse savedMouse;
+        private readonly List<InputDevice> disabledDevices = new List<InputDevice>();
+
+        // Names of our virtual devices so we can skip them when disabling
+        private static readonly HashSet<string> VirtualDeviceNames = new HashSet<string>
+            { "ReplayKeyboard", "ReplayMouse", "ReplayGamepad" };
         private Movement player;
         private ReplayFile replayFile;
         private int frameCounter;
@@ -103,13 +108,13 @@ namespace IGTAPReplay
             virtualGamepad = InputSystem.AddDevice<Gamepad>("ReplayGamepad");
             Log.LogInfo($"Virtual devices created: keyboard={virtualKeyboard.deviceId} mouse={virtualMouse.deviceId} gamepad={virtualGamepad.deviceId}");
 
-            // Rebind game actions to virtual keyboard
+            // Rebind game actions to virtual devices
             RebindActions();
 
             playing = true;
             skipNextMovementUpdate = true; // prevent Movement.Update from running this frame
 
-            // Pre-inject frame 1's input so it's ready when the next frame processes
+            // Pre-inject frame 1's input
             InjectForFrame(1);
 
             Log.LogInfo($"Playback started. {replayFile.Spans.Count} spans to play.");
@@ -245,6 +250,8 @@ namespace IGTAPReplay
             frameCounter++;
             AdvanceSpanIndex();
 
+            // Injection happens in LateUpdate
+
             // Input was already injected in the previous LateUpdate.
             // Now we just do bookkeeping for this frame.
 
@@ -283,13 +290,6 @@ namespace IGTAPReplay
             }
         }
 
-        private void LateUpdate()
-        {
-            if (!playing || player == null || virtualKeyboard == null) return;
-            if (!seeking && (finished || paused)) return;
-
-            InjectForFrame(frameCounter + 1);
-        }
 
         private void InjectForFrame(int frame)
         {
@@ -349,14 +349,12 @@ namespace IGTAPReplay
                     lastMousePos = span.MousePos.Value;
             }
 
-            // Always queue state for ALL virtual devices every frame so transitions
-            // (pressed->released, released->pressed) are detected correctly.
-            InputSystem.QueueStateEvent(virtualKeyboard, keyboardState, InputState.currentTime);
-
+            // Queue state for ALL virtual devices every frame so transitions are detected.
+            // Queue state events for processing at the start of the next frame
             mouseState.position = lastMousePos;
-            InputSystem.QueueStateEvent(virtualMouse, mouseState, InputState.currentTime);
-
-            InputSystem.QueueStateEvent(virtualGamepad, gamepadState, InputState.currentTime);
+            InputSystem.QueueStateEvent(virtualKeyboard, keyboardState);
+            InputSystem.QueueStateEvent(virtualMouse, mouseState);
+            InputSystem.QueueStateEvent(virtualGamepad, gamepadState);
         }
 
         private void ValidateCheckpoints()
@@ -393,6 +391,40 @@ namespace IGTAPReplay
                 }
                 checkpointIndex++;
             }
+        }
+
+        private void DisableRealDevices()
+        {
+            disabledDevices.Clear();
+            foreach (var device in InputSystem.devices)
+            {
+                if (VirtualDeviceNames.Contains(device.name)) continue;
+                if (device.enabled)
+                {
+                    InputSystem.DisableDevice(device);
+                    disabledDevices.Add(device);
+                }
+            }
+            Log.LogInfo($"Disabled {disabledDevices.Count} real input devices during playback.");
+        }
+
+        private void EnableRealDevices()
+        {
+            foreach (var device in disabledDevices)
+            {
+                try { InputSystem.EnableDevice(device); }
+                catch { /* device may have been removed */ }
+            }
+            Log.LogInfo($"Re-enabled {disabledDevices.Count} real input devices.");
+            disabledDevices.Clear();
+        }
+
+        private void LateUpdate()
+        {
+            if (!playing || player == null || virtualKeyboard == null) return;
+            if (!seeking && (finished || paused)) return;
+
+            InjectForFrame(frameCounter + 1);
         }
 
         private void AdvanceSpanIndex()

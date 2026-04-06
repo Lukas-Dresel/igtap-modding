@@ -116,7 +116,8 @@ namespace IGTAPReplay
             }
             else if (StopKey.Value.IsDown() && mode != Mode.Idle)
             {
-                Stop();
+                // Defer stop to end of frame so it doesn't corrupt mid-frame state
+                StartCoroutine(StopEndOfFrame());
             }
         }
 
@@ -171,6 +172,12 @@ namespace IGTAPReplay
             mode = Mode.Playing;
             ShowToast("Playback started");
             Log.LogInfo("Playing...");
+        }
+
+        private System.Collections.IEnumerator StopEndOfFrame()
+        {
+            yield return new UnityEngine.WaitForEndOfFrame();
+            Stop();
         }
 
         private void Stop()
@@ -304,6 +311,7 @@ namespace IGTAPReplay
 
             return true;
         }
+
     }
 
     /// <summary>

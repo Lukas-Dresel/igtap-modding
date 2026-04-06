@@ -139,18 +139,16 @@ namespace IGTAPReplay
                 }
             }
 
-            var keyboard = Keyboard.current;
-            if (keyboard == null) return;
-
-            // Pause/step (both modes)
-            if (keyboard.backspaceKey.wasPressedThisFrame)
+            // Use old Input system for editor hotkeys (real InputSystem devices are
+            // disabled during playback, but UnityEngine.Input still works)
+            if (Input.GetKeyDown(KeyCode.Backspace))
             {
                 if (paused) Resume();
                 else Pause();
             }
 
             if (paused)
-                HandleStepping(keyboard);
+                HandleStepping();
 
             // Live marker cleanup (recording)
             if (editorMode == EditorMode.Recording)
@@ -192,23 +190,19 @@ namespace IGTAPReplay
             Plugin.Instance.ShowToast("Resumed");
         }
 
-        private void HandleStepping(Keyboard keyboard)
+        private void HandleStepping()
         {
-            bool stepForward = keyboard.rightArrowKey.wasPressedThisFrame;
-            bool stepBackward = keyboard.leftArrowKey.wasPressedThisFrame;
+            bool stepForward = Input.GetKeyDown(KeyCode.RightArrow);
+            bool stepBackward = Input.GetKeyDown(KeyCode.LeftArrow);
             bool stepSecFwd = false;
             bool stepSecBack = false;
 
-            var mouse = Mouse.current;
-            if (mouse != null)
-            {
-                float scroll = mouse.scroll.ReadValue().y;
-                if (scroll > 0.5f) stepForward = true;
-                else if (scroll < -0.5f) stepBackward = true;
-            }
+            float scroll = Input.mouseScrollDelta.y;
+            if (scroll > 0.5f) stepForward = true;
+            else if (scroll < -0.5f) stepBackward = true;
 
             // Shift+arrow for 1 second steps
-            if (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed)
+            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
             {
                 if (stepForward) { stepForward = false; stepSecFwd = true; }
                 if (stepBackward) { stepBackward = false; stepSecBack = true; }
