@@ -139,14 +139,11 @@ namespace IGTAPReplay
                 {
                     if (pendingStepTarget > 0)
                     {
-                        // Set timeScale and unpause. This frame has dt=0 so
-                        // InjectCurrentFrame/ShouldMovementUpdate will skip.
-                        // Next frame has dt=0.02, everything runs, PauseOnFrame catches it.
-                        Time.timeScale = savedTimeScale > 0 ? savedTimeScale : 1f;
-                        playback.PauseOnFrame = pendingStepTarget;
-                        playback.IsPaused = false;
+                        // Don't unpause here. Request it so the Movement prefix
+                        // executes the unpause at the correct lifecycle point.
+                        playback.RequestUnpause(pendingStepTarget);
                         paused = false;
-                        Plugin.DbgLog($"Editor.Update step GO target={pendingStepTarget} dt={Time.deltaTime}");
+                        Plugin.DbgLog($"Editor.Update step REQUESTED target={pendingStepTarget}");
                         pendingStepTarget = 0;
                     }
                     // Don't sync pause while a step is in flight
@@ -209,16 +206,16 @@ namespace IGTAPReplay
         {
             if (!paused) return;
             paused = false;
-            Time.timeScale = savedTimeScale > 0 ? savedTimeScale : 1f;
 
             var playback = FindAnyObjectByType<ReplayPlayback>();
             if (playback != null)
             {
-                playback.IsPaused = false;
-                playback.PauseOnFrame = 0; // clear any pending pause
+                // Request unpause at the Movement prefix lifecycle point.
+                // PauseOnFrame=0 means don't auto-pause (just resume normal play).
+                playback.RequestUnpause(0);
             }
 
-            Plugin.DbgLog($"Editor.Resume timeScale={Time.timeScale}");
+            Plugin.DbgLog("Editor.Resume requested");
             Plugin.Instance.ShowToast("Resumed");
         }
 

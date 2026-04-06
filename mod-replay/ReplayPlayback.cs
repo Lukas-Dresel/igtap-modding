@@ -55,29 +55,59 @@ namespace IGTAPReplay
         private readonly Dictionary<System.Guid, List<string>> savedOverrides = new Dictionary<System.Guid, List<string>>();
 
         // Skip Movement.Update on the frame where StartPlayback is called
-        // (because Movement.Update runs AFTER Plugin.Update on the same frame,
-        // and our virtual input hasn't been processed yet)
         private bool skipNextMovementUpdate;
+
+        // Pending unpause: set by editor.Update, executed by Movement prefix
+        private bool pendingUnpause;
+        private int pendingPauseOnFrame;
 
         /// <summary>
         /// Called from Harmony prefix on Movement.Update. Returns false to skip the update.
         /// </summary>
+        /// <summary>
+        /// Called by the editor to request an unpause. The actual unpause happens
+        /// inside the Movement.Update prefix — the correct lifecycle point.
+        /// </summary>
+        public void RequestUnpause(int pauseOnFrame)
+        {
+            pendingUnpause = true;
+            pendingPauseOnFrame = pauseOnFrame;
+            Plugin.DbgLog($"RequestUnpause: pauseOnFrame={pauseOnFrame}");
+        }
+
         public bool ShouldMovementUpdate()
         {
             if (skipNextMovementUpdate)
             {
                 skipNextMovementUpdate = false;
-                // Re-restore state here (after physics step) to undo any gravity applied
-                // between StartPlayback (in Plugin.Update) and now (Movement.Update prefix)
                 RestoreCheckpointBefore(0);
                 Plugin.DbgLog("ShouldMovementUpdate: SKIPPED + re-restored (startup frame)");
                 return false;
             }
+
+            // Execute pending unpause HERE, at the exact right lifecycle point.
+            // Only execute when dt > 0, otherwise Movement would be a no-op.
+            // Setting timeScale=1 here ensures the NEXT frame has dt > 0.
+            if (pendingUnpause)
+            {
+                if (Time.deltaTime == 0f)
+                {
+                    // Not ready yet — ensure timeScale is set for next frame
+                    Time.timeScale = 1f;
+                    Plugin.DbgLog("ShouldMovementUpdate: pending unpause waiting (dt=0)");
+                    return false;
+                }
+                pendingUnpause = false;
+                PauseOnFrame = pendingPauseOnFrame;
+                paused = false;
+                Plugin.DbgLog($"ShouldMovementUpdate: executed pending unpause, PauseOnFrame={PauseOnFrame}");
+                return true;
+            }
+
             // When paused (and not seeking), skip Movement.Update entirely
             if (paused && !seeking)
             {
-                var body = (Rigidbody2D)ReplayState.F_body.GetValue(player);
-                Plugin.DbgLog($"ShouldMovementUpdate: SKIPPED (paused) vel=({body.linearVelocityX:F1},{body.linearVelocityY:F1}) pos=({body.position.x:F1},{body.position.y:F1})");
+                Plugin.DbgLog($"ShouldMovementUpdate: SKIPPED (paused)");
                 return false;
             }
             // Skip dt=0 frames (timeScale just switched)
