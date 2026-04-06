@@ -12,6 +12,9 @@ igtap/
 ├── mod-dashplus/                # Dash+ mod - diagonal and vertical dashing
 ├── mod-inputviz/                # Input Viz mod - on-screen input/status overlay
 ├── mod-minimap/                 # Minimap mod - in-game map overlay with multiple view modes
+├── mod-checkpoint/               # Checkpoint mod - custom save/teleport checkpoints with clone ghosts
+├── mod-fixedtimestep/            # Fixed Timestep mod - locks deltaTime for deterministic physics
+├── mod-replay/                  # Replay mod - record/replay inputs with timeline editor
 ├── mod-IMPORTED-HitboxViewer/   # (Imported) Hitbox Viewer - collision volume visualization
 ├── mod-IMPORTED-IGTAS/          # (Imported) IGTAS - tool-assisted speedrun input recording/playback
 ├── decomp/                      # Scripts for decompilation
@@ -64,6 +67,25 @@ In-game minimap/map overlay with real-time tilemap rendering. Features:
 - Three view modes: full world, follow player (with configurable zoom), current course
 - Configurable position (screen corner), size, and opacity
 - Toggle with F6, cycle view modes with F5, settings in debug menu (F8)
+
+### Fixed Timestep (`mod-fixedtimestep/`)
+
+Locks `Time.captureFramerate = 50`, forcing `Time.deltaTime = 0.02` every frame regardless of actual framerate. Required for deterministic replay — all physics calculations in `Movement.Update()` use `deltaTime`, so locking it makes the simulation frame-rate independent.
+
+### Replay (`mod-replay/`)
+
+Record player inputs to a human-editable text file and replay them deterministically. Features:
+
+- **Recording**: captures all keyboard, mouse, and gamepad input per frame
+- **Playback**: injects recorded input via virtual InputSystem devices
+- **Timeline bar**: colored segments by key combination, scrubbing, hover tooltips
+- **Transport controls**: play/pause, frame step, 1-second step, speed control (0.1x-4x)
+- **Ghost markers**: blue (pressed) and orange (released) ghost sprites at input change points
+- **Checkpoints**: full state snapshots for backward seeking and desync detection
+- **Human-editable format**: short key names (D, Space, LMB, GP-A), editable in any text editor
+- **Auto-restart on death**: restarts recording when the player respawns
+
+See [`mod-replay/README.md`](mod-replay/README.md) for full documentation.
 
 ### Imported Mods
 

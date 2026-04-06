@@ -377,9 +377,14 @@ namespace IGTAPReplay
                 PauseOnFrame = 0;
                 paused = true;
                 Time.timeScale = 0f;
-                // Force transform to match rigidbody so the visual position updates
                 var body = (Rigidbody2D)ReplayState.F_body.GetValue(player);
                 player.transform.position = new Vector3(body.position.x, body.position.y, player.transform.position.z);
+
+                // Update ghosts even when stepping
+                var stepEditor = FindAnyObjectByType<ReplayEditor>();
+                if (stepEditor != null)
+                    stepEditor.OnPlaybackFrame(frameCounter, player);
+
                 Plugin.DbgLog($"PostMovementUpdate STEP DONE fc={frameCounter} pos={body.position}");
                 return;
             }
