@@ -24,7 +24,13 @@ namespace IGTAPMod
                 new KeyboardShortcut(KeyCode.F8),
                 "Press to open/close the mod menu (HUD is always visible)");
 
+            ModManagerUI.ToggleKey = Config.Bind("UI", "ModManagerKey",
+                new KeyboardShortcut(KeyCode.F9),
+                "Press to open/close the mod manager");
+
             gameObject.AddComponent<DebugUI>();
+            gameObject.AddComponent<ModManagerUI>();
+            gameObject.AddComponent<ModKeybindInjector>();
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded!");
         }
