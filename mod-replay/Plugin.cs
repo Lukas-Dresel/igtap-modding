@@ -76,7 +76,7 @@ namespace IGTAPReplay
                 "Path to the replay file (relative to BepInEx/config/)");
             RecordMousePosition = Config.Bind("General", "RecordMousePosition", false,
                 "Record mouse screen position each frame (bloats the file, usually not needed)");
-            RestartOnRespawn = Config.Bind("General", "RestartOnRespawn", false,
+            RestartOnRespawn = Config.Bind("General", "RestartOnRespawn", true,
                 "Automatically restart recording when the player respawns (discards previous recording)");
             PerFrameCheckpoints = Config.Bind("Debug", "PerFrameCheckpoints", false,
                 "Record a checkpoint every single frame (large files, for debugging desync)");
@@ -116,8 +116,16 @@ namespace IGTAPReplay
 
         private void Update()
         {
-            if (RecordKey.Value.IsDown() && mode == Mode.Idle)
+            if (RecordKey.Value.IsDown() && (mode == Mode.Idle || mode == Mode.Recording))
             {
+                if (mode == Mode.Recording)
+                {
+                    // Restart: stop current, start fresh
+                    ReplayRecorder.Editor = null;
+                    editor?.End();
+                    ReplayRecorder.StopRecording();
+                    DbgLog("Recording restarted (F5)");
+                }
                 StartRecording();
             }
             else if (PlayKey.Value.IsDown() && mode == Mode.Idle)

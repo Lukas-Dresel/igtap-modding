@@ -48,6 +48,7 @@ namespace IGTAPReplay
             public Vector3 WorldPos;
             public string Text;
             public float SpawnTime;
+            public bool IsPress; // true = blue (pressed), false = orange (released)
         }
 
         /// <summary>Precomputed ghost from replay file spans.</summary>
@@ -55,8 +56,9 @@ namespace IGTAPReplay
         {
             public int Frame;
             public int SpanIndex;
-            public string Label;     // "+space -d" etc
-            public bool IsPress;     // had keys added
+            public string PressLabel;   // "▲Space ▲D" or null
+            public string ReleaseLabel; // "▼LMB" or null
+            public bool IsPress;        // had keys added
         }
 
         // Timeline
@@ -266,18 +268,15 @@ namespace IGTAPReplay
                 return;
             }
 
-            var parts = new List<string>();
-            foreach (var k in added) parts.Add("+" + KeyNames.ToShortName(k));
-            foreach (var k in removed) parts.Add("-" + KeyNames.ToShortName(k));
-            string labelText = string.Join(" ", parts);
-
-            SpawnLiveGhost(p, labelText, added.Count > 0);
+            // Spawn ghost at player position
+            SpawnLiveGhost(p, added, removed);
             prevMarkerKeys = new HashSet<string>(currentKeys);
         }
 
-        private void SpawnLiveGhost(Movement p, string label, bool isPress)
+        private void SpawnLiveGhost(Movement p, HashSet<string> added, HashSet<string> removed)
         {
-            var go = CreateGhostObject(p, isPress);
+            bool hasAdded = added.Count > 0;
+            var go = CreateGhostObject(p, hasAdded);
             if (go == null) return;
 
             liveMarkers.Add(new GhostMarker
@@ -288,12 +287,31 @@ namespace IGTAPReplay
                 GhostIndex = -1,
             });
 
-            liveLabels.Add(new MarkerLabel
+            // Pressed keys: head level (above), blue, ▲ prefix
+            if (added.Count > 0)
             {
-                WorldPos = p.transform.position + Vector3.up * 40f,
-                Text = label,
-                SpawnTime = Time.unscaledTime,
-            });
+                string pressText = string.Join(" ", added.Select(k => "\u25B2" + KeyNames.ToShortName(k)));
+                liveLabels.Add(new MarkerLabel
+                {
+                    WorldPos = p.transform.position + Vector3.up * 45f,
+                    Text = pressText,
+                    SpawnTime = Time.unscaledTime,
+                    IsPress = true,
+                });
+            }
+
+            // Released keys: foot level (below), orange, ▼ prefix
+            if (removed.Count > 0)
+            {
+                string releaseText = string.Join(" ", removed.Select(k => "\u25BC" + KeyNames.ToShortName(k)));
+                liveLabels.Add(new MarkerLabel
+                {
+                    WorldPos = p.transform.position + Vector3.down * 35f,
+                    Text = releaseText,
+                    SpawnTime = Time.unscaledTime,
+                    IsPress = false,
+                });
+            }
         }
 
         private void CleanupLiveMarkers()
@@ -348,15 +366,19 @@ namespace IGTAPReplay
 
                 if (added.Count > 0 || removed.Count > 0)
                 {
-                    var parts = new List<string>();
-                    foreach (var k in added) parts.Add("+" + KeyNames.ToShortName(k));
-                    foreach (var k in removed) parts.Add("-" + KeyNames.ToShortName(k));
+                    string pressLabel = added.Count > 0
+                        ? string.Join(" ", added.Select(k => "\u25B2" + KeyNames.ToShortName(k)))
+                        : null;
+                    string releaseLabel = removed.Count > 0
+                        ? string.Join(" ", removed.Select(k => "\u25BC" + KeyNames.ToShortName(k)))
+                        : null;
 
                     replayGhosts.Add(new ReplayGhost
                     {
                         Frame = span.Frame,
                         SpanIndex = i,
-                        Label = string.Join(" ", parts),
+                        PressLabel = pressLabel,
+                        ReleaseLabel = releaseLabel,
                         IsPress = added.Count > 0,
                     });
                 }
@@ -505,8 +527,8 @@ namespace IGTAPReplay
             sr.sortingOrder = playerSr.sortingOrder - 1;
 
             Color c = isPress
-                ? new Color(0.3f, 1f, 0.3f, MarkerAlpha)
-                : new Color(1f, 0.3f, 0.3f, MarkerAlpha);
+                ? new Color(PressColor.r, PressColor.g, PressColor.b, MarkerAlpha)
+                : new Color(ReleaseColor.r, ReleaseColor.g, ReleaseColor.b, MarkerAlpha);
             sr.color = c;
             return go;
         }
@@ -534,6 +556,10 @@ namespace IGTAPReplay
                 DrawPausedBanner();
         }
 
+        // Colorblind-safe: blue = press, orange = release
+        private static readonly Color PressColor = new Color(0.2f, 0.5f, 1f);
+        private static readonly Color ReleaseColor = new Color(1f, 0.6f, 0.15f);
+
         private void DrawLiveLabels()
         {
             var cam = Camera.main;
@@ -557,9 +583,11 @@ namespace IGTAPReplay
                 if (screenPos.z < 0) continue;
                 float guiY = Screen.height - screenPos.y;
 
+                Color fg = label.IsPress ? PressColor : ReleaseColor;
+
                 style.normal.textColor = new Color(0f, 0f, 0f, alpha);
                 GUI.Label(new Rect(screenPos.x - 49, guiY - 9, 100, 20), label.Text, style);
-                style.normal.textColor = new Color(1f, 1f, 1f, alpha);
+                style.normal.textColor = new Color(fg.r, fg.g, fg.b, alpha);
                 GUI.Label(new Rect(screenPos.x - 50, guiY - 10, 100, 20), label.Text, style);
             }
         }
@@ -580,17 +608,37 @@ namespace IGTAPReplay
             {
                 if (m.Go == null || m.GhostIndex < 0 || m.GhostIndex >= replayGhosts.Count) continue;
                 var ghost = replayGhosts[m.GhostIndex];
+                float alpha = m.Sr.color.a / MarkerAlpha;
 
-                Vector3 worldPos = m.Go.transform.position + Vector3.up * 40f;
-                Vector3 screenPos = cam.WorldToScreenPoint(worldPos);
-                if (screenPos.z < 0) continue;
-                float guiY = Screen.height - screenPos.y;
+                // Press label at head level (blue)
+                if (ghost.PressLabel != null)
+                {
+                    Vector3 headPos = m.Go.transform.position + Vector3.up * 45f;
+                    Vector3 sp = cam.WorldToScreenPoint(headPos);
+                    if (sp.z >= 0)
+                    {
+                        float gy = Screen.height - sp.y;
+                        style.normal.textColor = new Color(0f, 0f, 0f, alpha);
+                        GUI.Label(new Rect(sp.x - 59, gy - 9, 120, 20), ghost.PressLabel, style);
+                        style.normal.textColor = new Color(PressColor.r, PressColor.g, PressColor.b, alpha);
+                        GUI.Label(new Rect(sp.x - 60, gy - 10, 120, 20), ghost.PressLabel, style);
+                    }
+                }
 
-                float alpha = m.Sr.color.a / MarkerAlpha; // match ghost opacity
-                style.normal.textColor = new Color(0f, 0f, 0f, alpha);
-                GUI.Label(new Rect(screenPos.x - 59, guiY - 9, 120, 20), ghost.Label, style);
-                style.normal.textColor = new Color(1f, 1f, 1f, alpha);
-                GUI.Label(new Rect(screenPos.x - 60, guiY - 10, 120, 20), ghost.Label, style);
+                // Release label at foot level (orange)
+                if (ghost.ReleaseLabel != null)
+                {
+                    Vector3 footPos = m.Go.transform.position + Vector3.down * 35f;
+                    Vector3 sp = cam.WorldToScreenPoint(footPos);
+                    if (sp.z >= 0)
+                    {
+                        float gy = Screen.height - sp.y;
+                        style.normal.textColor = new Color(0f, 0f, 0f, alpha);
+                        GUI.Label(new Rect(sp.x - 59, gy - 9, 120, 20), ghost.ReleaseLabel, style);
+                        style.normal.textColor = new Color(ReleaseColor.r, ReleaseColor.g, ReleaseColor.b, alpha);
+                        GUI.Label(new Rect(sp.x - 60, gy - 10, 120, 20), ghost.ReleaseLabel, style);
+                    }
+                }
             }
         }
 
