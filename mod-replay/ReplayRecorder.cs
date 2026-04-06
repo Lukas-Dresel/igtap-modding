@@ -103,6 +103,11 @@ namespace IGTAPReplay
             if (!recording || player != trackedPlayer) return;
 
             frameCounter++;
+            if (frameCounter <= 3)
+            {
+                var body = (Rigidbody2D)ReplayState.F_body.GetValue(player);
+                Plugin.DbgLog($"REC OnFrame fc={frameCounter} dt={Time.deltaTime:F4} vel=({body.linearVelocityX:F1},{body.linearVelocityY:F1}) pos=({body.position.x:F1},{body.position.y:F1})");
+            }
 
             var keyboard = Keyboard.current;
             var mouse = Mouse.current;
@@ -174,10 +179,25 @@ namespace IGTAPReplay
             bool keysChanged = !currentKeys.SetEquals(prevKeys);
             if (keysChanged || mouseMoved)
             {
+                // Compute xMoveAxis the same way Movement does from the input
+                float xma = 0f;
+                if (keyboard != null)
+                {
+                    var moveAction = (UnityEngine.InputSystem.InputAction)ReplayState.F_moveAction.GetValue(player);
+                    var moveVal = moveAction.ReadValue<Vector2>();
+                    xma = moveVal.x;
+                    if ((double)xma > 0.85) xma = 1f;
+                    else if ((double)xma < -0.85) xma = -1f;
+                    else if ((double)xma > 0.4 && (double)Mathf.Abs(moveVal.y) > 0.4) xma = 1f;
+                    else if ((double)xma < -0.4 && (double)Mathf.Abs(moveVal.y) > 0.4) xma = -1f;
+                    else if ((double)Mathf.Abs(xma) < 0.2) xma = 0f;
+                }
+
                 var span = new InputSpan
                 {
                     Frame = frameCounter,
                     Keys = new HashSet<string>(currentKeys),
+                    XMoveAxis = xma,
                 };
 
                 if (mouseMoved)

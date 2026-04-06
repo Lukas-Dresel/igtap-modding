@@ -86,6 +86,7 @@ namespace IGTAPReplay
         /// <summary>Pause from external call (e.g. playback finished).</summary>
         public void PausePlayback()
         {
+            Plugin.DbgLog($"PausePlayback called, paused={paused}");
             if (!paused) Pause();
         }
 
@@ -138,11 +139,14 @@ namespace IGTAPReplay
                 {
                     if (pendingStepTarget > 0)
                     {
+                        // Set timeScale and unpause. This frame has dt=0 so
+                        // InjectCurrentFrame/ShouldMovementUpdate will skip.
+                        // Next frame has dt=0.02, everything runs, PauseOnFrame catches it.
                         Time.timeScale = savedTimeScale > 0 ? savedTimeScale : 1f;
                         playback.PauseOnFrame = pendingStepTarget;
                         playback.IsPaused = false;
                         paused = false;
-                        Plugin.DbgLog($"Editor.Update step GO target={pendingStepTarget}");
+                        Plugin.DbgLog($"Editor.Update step GO target={pendingStepTarget} dt={Time.deltaTime}");
                         pendingStepTarget = 0;
                     }
                     // Don't sync pause while a step is in flight
@@ -154,7 +158,7 @@ namespace IGTAPReplay
                     {
                         paused = true;
                         Time.timeScale = 0f;
-                        Plugin.DbgLog("Editor.Update synced pause from playback");
+                        Plugin.DbgLog($"Editor.Update synced pause from playback fc={playback.FrameCount}");
                     }
                 }
             }
@@ -163,6 +167,7 @@ namespace IGTAPReplay
             // disabled during playback, but UnityEngine.Input still works)
             if (Input.GetKeyDown(KeyCode.Backspace))
             {
+                Plugin.DbgLog($"Backspace pressed, paused={paused}");
                 if (paused) Resume();
                 else Pause();
             }

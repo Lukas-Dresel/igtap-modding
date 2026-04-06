@@ -23,6 +23,9 @@ namespace IGTAPReplay
 
         /// <summary>Mouse screen position, or null if unchanged from previous span.</summary>
         public Vector2? MousePos;
+
+        /// <summary>The resolved xMoveAxis value at recording time.</summary>
+        public float XMoveAxis;
     }
 
     /// <summary>
@@ -124,7 +127,8 @@ namespace IGTAPReplay
                 string mousePart = span.MousePos.HasValue
                     ? $" @{F(span.MousePos.Value.x)},{F(span.MousePos.Value.y)}"
                     : "";
-                sb.AppendLine($"{span.Frame,-8} {keys}{mousePart}");
+                string axisPart = $" x={span.XMoveAxis:F0}";
+                sb.AppendLine($"{span.Frame,-8} {keys}{mousePart}{axisPart}");
             }
 
             // Write remaining verify points and checkpoints
@@ -172,6 +176,7 @@ namespace IGTAPReplay
 
                 var keys = new HashSet<string>();
                 Vector2? mousePos = null;
+                float xMoveAxis = 0f;
                 for (int i = 1; i < parts.Length; i++)
                 {
                     if (parts[i] == ".")
@@ -187,13 +192,17 @@ namespace IGTAPReplay
                             mousePos = new Vector2(mx, my);
                         }
                     }
+                    else if (parts[i].StartsWith("x="))
+                    {
+                        float.TryParse(parts[i].Substring(2), NumberStyles.Float, CultureInfo.InvariantCulture, out xMoveAxis);
+                    }
                     else
                     {
                         keys.Add(parts[i]);
                     }
                 }
 
-                file.Spans.Add(new InputSpan { Frame = frame, Keys = keys, MousePos = mousePos });
+                file.Spans.Add(new InputSpan { Frame = frame, Keys = keys, MousePos = mousePos, XMoveAxis = xMoveAxis });
             }
 
             // Set InitialState from frame-0 checkpoint if available

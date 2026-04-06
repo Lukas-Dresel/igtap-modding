@@ -148,6 +148,7 @@ namespace IGTAPReplay
             editor.Begin(player);
             ReplayRecorder.Editor = editor;
 
+            DbgLog("StartRecording called");
             ShowToast("Recording started");
             Log.LogInfo("Recording...");
         }
@@ -177,6 +178,7 @@ namespace IGTAPReplay
             if (editor == null)
                 editor = gameObject.AddComponent<ReplayEditor>();
 
+            DbgLog("StartPlaying called");
             playback.StartPlayback(player, replayFile);
             editor.BeginReplay(player, replayFile);
             mode = Mode.Playing;
@@ -192,6 +194,7 @@ namespace IGTAPReplay
 
         private void Stop()
         {
+            DbgLog($"Stop() mode={mode}");
             if (mode == Mode.Recording)
             {
                 ReplayRecorder.Editor = null;
@@ -221,7 +224,7 @@ namespace IGTAPReplay
         /// <summary>Called by ReplayPlayback when it reaches the end of the replay.</summary>
         internal void OnPlaybackFinished()
         {
-            // Don't tear down — just pause at the end so the user can scrub/review
+            DbgLog("OnPlaybackFinished");
             editor?.PausePlayback();
             ShowToast("Playback finished");
         }

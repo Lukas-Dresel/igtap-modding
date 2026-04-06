@@ -39,6 +39,7 @@ namespace IGTAPReplay
         private bool finished;
         private bool paused;
         private Vector2 lastMousePos;
+        private HashSet<string> prevInjectedKeys = new HashSet<string>();
 
         // Seeking
         private bool seeking;
@@ -66,7 +67,10 @@ namespace IGTAPReplay
             if (skipNextMovementUpdate)
             {
                 skipNextMovementUpdate = false;
-                Plugin.DbgLog("ShouldMovementUpdate: SKIPPED (startup frame)");
+                // Re-restore state here (after physics step) to undo any gravity applied
+                // between StartPlayback (in Plugin.Update) and now (Movement.Update prefix)
+                RestoreCheckpointBefore(0);
+                Plugin.DbgLog("ShouldMovementUpdate: SKIPPED + re-restored (startup frame)");
                 return false;
             }
             // When paused (and not seeking), skip Movement.Update entirely
@@ -76,7 +80,7 @@ namespace IGTAPReplay
                 Plugin.DbgLog($"ShouldMovementUpdate: SKIPPED (paused) vel=({body.linearVelocityX:F1},{body.linearVelocityY:F1}) pos=({body.position.x:F1},{body.position.y:F1})");
                 return false;
             }
-            // Skip dt=0 frames (timeScale just switched, Movement would be a no-op at best)
+            // Skip dt=0 frames (timeScale just switched)
             if (Time.deltaTime == 0f)
             {
                 Plugin.DbgLog("ShouldMovementUpdate: SKIPPED (dt=0)");
@@ -118,6 +122,7 @@ namespace IGTAPReplay
             RestoreCheckpointBefore(0);
 
             lastMousePos = Vector2.zero;
+            prevInjectedKeys.Clear();
 
             // Remove real devices so they can't interfere during playback.
             // UnityEngine.Input (old API) still works for F7 since it reads from OS.
@@ -140,6 +145,9 @@ namespace IGTAPReplay
 
             playing = true;
             skipNextMovementUpdate = true;
+
+            var dbgBody = (Rigidbody2D)ReplayState.F_body.GetValue(player);
+            Plugin.DbgLog($"StartPlayback: playing=true skipNext=true fc={frameCounter} dt={Time.deltaTime:F4} vel=({dbgBody.linearVelocityX:F1},{dbgBody.linearVelocityY:F1}) pos=({dbgBody.position.x:F1},{dbgBody.position.y:F1})");
 
             Log.LogInfo($"Playback started. {replayFile.Spans.Count} spans to play.");
         }
@@ -279,10 +287,9 @@ namespace IGTAPReplay
                 return;
             }
             // Skip frames with deltaTime=0 (happens when timeScale switches mid-visual-frame).
-            // Movement would run but all deltaTime-based calculations produce zero.
             if (Time.deltaTime == 0f)
             {
-                Plugin.DbgLog($"InjectCurrentFrame SKIPPED fc={frameCounter} dt=0 (resume frame)");
+                Plugin.DbgLog($"InjectCurrentFrame SKIPPED fc={frameCounter} dt=0");
                 return;
             }
 
@@ -290,9 +297,15 @@ namespace IGTAPReplay
             AdvanceSpanIndex();
             InjectForFrame(frameCounter);
             InputSystem.Update();
+
+            // Override xMoveAxis from the recorded span value to handle opposing-key
+            // composite resolution differences (e.g. a+d simultaneously)
+            if (spanIndex < replayFile.Spans.Count && replayFile.Spans[spanIndex].Frame <= frameCounter)
+                ReplayState.F_xMoveAxis.SetValue(player, replayFile.Spans[spanIndex].XMoveAxis);
+
             var moveAct = (UnityEngine.InputSystem.InputAction)ReplayState.F_moveAction.GetValue(player);
             var moveVal = moveAct.ReadValue<Vector2>();
-            Plugin.DbgLog($"InjectCurrentFrame fc={frameCounter} seeking={seeking} seekTarget={seekTarget} paused={paused} timeScale={Time.timeScale} dt={Time.deltaTime:F4} moveVal=({moveVal.x:F1},{moveVal.y:F1})");
+            Plugin.DbgLog($"InjectCurrentFrame fc={frameCounter} seeking={seeking} seekTarget={seekTarget} paused={paused} timeScale={Time.timeScale} dt={Time.deltaTime:F4} moveVal=({moveVal.x:F1},{moveVal.y:F1}) xma={replayFile.Spans[spanIndex].XMoveAxis}");
 
 
             // Validate checkpoints HERE (in the prefix, before Movement runs) —
@@ -359,6 +372,7 @@ namespace IGTAPReplay
                 seeking = false;
                 finished = true;
                 paused = true;
+                Plugin.DbgLog($"PostMovementUpdate END OF REPLAY fc={frameCounter}");
                 Log.LogInfo($"Playback reached end at frame {frameCounter}.");
                 Plugin.Instance.OnPlaybackFinished();
             }
@@ -424,9 +438,6 @@ namespace IGTAPReplay
             }
 
             // Queue state for ALL virtual devices every frame so transitions are detected.
-            // Queue state events. FixedUpdate runs before Update, and InputSystem
-            // processes these events during the Dynamic update at the start of Update,
-            // so Movement.Update sees the correct state.
             mouseState.position = lastMousePos;
             InputSystem.QueueStateEvent(virtualKeyboard, keyboardState, InputState.currentTime);
             InputSystem.QueueStateEvent(virtualMouse, mouseState, InputState.currentTime);
