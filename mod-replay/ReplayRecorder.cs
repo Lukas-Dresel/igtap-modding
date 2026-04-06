@@ -83,8 +83,9 @@ namespace IGTAPReplay
         {
             if (!recording) return null;
 
-            // Final checkpoint at the end of recording
-            if (trackedPlayer != null)
+            // Final checkpoint at the end of recording (skip if one already exists at this frame)
+            if (trackedPlayer != null &&
+                (replayFile.Checkpoints.Count == 0 || replayFile.Checkpoints[replayFile.Checkpoints.Count - 1].Frame != frameCounter))
                 CaptureCheckpoint(trackedPlayer);
 
             recording = false;

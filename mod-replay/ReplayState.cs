@@ -134,7 +134,7 @@ namespace IGTAPReplay
             var body = (Rigidbody2D)F_body.GetValue(player);
             return new Snapshot
             {
-                Position = player.transform.position,
+                Position = (Vector2)player.transform.position,
                 Velocity = body.linearVelocity,
                 Momentum = (Vector2)F_momentum.GetValue(player),
                 LastAppliedMomentum = (float)F_lastAppliedMomentum.GetValue(player),
@@ -188,7 +188,11 @@ namespace IGTAPReplay
         {
             var body = (Rigidbody2D)F_body.GetValue(player);
 
-            player.transform.position = new Vector3(snap.Position.x, snap.Position.y, player.transform.position.z);
+            // Set position on both transform and rigidbody, then force physics sync
+            var pos = new Vector3(snap.Position.x, snap.Position.y, player.transform.position.z);
+            player.transform.position = pos;
+            body.position = snap.Position;
+            Physics2D.SyncTransforms();
             body.linearVelocity = snap.Velocity;
             F_momentum.SetValue(player, snap.Momentum);
             F_lastAppliedMomentum.SetValue(player, snap.LastAppliedMomentum);

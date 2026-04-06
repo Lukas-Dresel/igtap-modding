@@ -112,10 +112,7 @@ namespace IGTAPReplay
             RebindActions();
 
             playing = true;
-            skipNextMovementUpdate = true; // prevent Movement.Update from running this frame
-
-            // Pre-inject frame 1's input
-            InjectForFrame(1);
+            skipNextMovementUpdate = true;
 
             Log.LogInfo($"Playback started. {replayFile.Spans.Count} spans to play.");
         }
@@ -240,17 +237,39 @@ namespace IGTAPReplay
             }
         }
 
-        private void Update()
+        /// <summary>
+        /// Called from Harmony prefix on Movement.Update. Advances frame, injects input,
+        /// forces InputSystem to process it immediately.
+        /// </summary>
+        public void InjectCurrentFrame()
         {
             if (!playing || player == null || virtualKeyboard == null) return;
-
-            // Don't advance while paused (but seeking overrides pause)
             if (!seeking && (finished || paused)) return;
 
             frameCounter++;
             AdvanceSpanIndex();
+            InjectForFrame(frameCounter);
+            InputSystem.Update();
 
-            // Injection happens in LateUpdate
+
+            // Validate checkpoints HERE (in the prefix, before Movement runs) —
+            // because checkpoints were captured in the prefix during recording.
+            // Skip frame 1 since the startup frame skip causes a known 1-frame offset.
+            if (frameCounter > 1)
+            {
+                CheckVerifyPoints();
+                ValidateCheckpoints();
+            }
+        }
+
+        /// <summary>
+        /// Called from Harmony postfix on Movement.Update, after Movement processed input.
+        /// Handles bookkeeping: ghosts, seeking, end detection.
+        /// </summary>
+        public void PostMovementUpdate()
+        {
+            if (!playing || player == null) return;
+            if (!seeking && (finished || paused)) return;
 
             // Input was already injected in the previous LateUpdate.
             // Now we just do bookkeeping for this frame.
@@ -270,10 +289,6 @@ namespace IGTAPReplay
                 if (editor != null)
                     editor.OnPlaybackFrame(frameCounter, player);
             }
-
-            // Desync detection at verification points and checkpoints
-            CheckVerifyPoints();
-            ValidateCheckpoints();
 
             // At end of replay, pause in place (don't tear down)
             bool pastAllSpans = replayFile.Spans.Count == 0 ||
@@ -350,11 +365,13 @@ namespace IGTAPReplay
             }
 
             // Queue state for ALL virtual devices every frame so transitions are detected.
-            // Queue state events for processing at the start of the next frame
+            // Queue state events. FixedUpdate runs before Update, and InputSystem
+            // processes these events during the Dynamic update at the start of Update,
+            // so Movement.Update sees the correct state.
             mouseState.position = lastMousePos;
-            InputSystem.QueueStateEvent(virtualKeyboard, keyboardState);
-            InputSystem.QueueStateEvent(virtualMouse, mouseState);
-            InputSystem.QueueStateEvent(virtualGamepad, gamepadState);
+            InputSystem.QueueStateEvent(virtualKeyboard, keyboardState, InputState.currentTime);
+            InputSystem.QueueStateEvent(virtualMouse, mouseState, InputState.currentTime);
+            InputSystem.QueueStateEvent(virtualGamepad, gamepadState, InputState.currentTime);
         }
 
         private void ValidateCheckpoints()
@@ -417,14 +434,6 @@ namespace IGTAPReplay
             }
             Log.LogInfo($"Re-enabled {disabledDevices.Count} real input devices.");
             disabledDevices.Clear();
-        }
-
-        private void LateUpdate()
-        {
-            if (!playing || player == null || virtualKeyboard == null) return;
-            if (!seeking && (finished || paused)) return;
-
-            InjectForFrame(frameCounter + 1);
         }
 
         private void AdvanceSpanIndex()

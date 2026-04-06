@@ -104,6 +104,7 @@ namespace IGTAPReplay
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded!");
         }
 
+
         private void Update()
         {
             if (RecordKey.Value.IsDown() && mode == Mode.Idle)
@@ -301,18 +302,32 @@ namespace IGTAPReplay
     {
         static bool Prefix(Movement __instance)
         {
+            // Record input in the same prefix where Movement is about to read it
             if (ReplayRecorder.IsRecording)
                 ReplayRecorder.OnFrame(__instance);
 
-            // Skip Movement.Update on the frame playback starts (before virtual input is ready)
+            // During playback: inject input then let Movement run
             var playback = Object.FindAnyObjectByType<ReplayPlayback>();
-            if (playback != null && playback.IsPlaying && !playback.ShouldMovementUpdate())
-                return false;
+            if (playback != null && playback.IsPlaying)
+            {
+                if (!playback.ShouldMovementUpdate())
+                    return false;
+
+                playback.InjectCurrentFrame();
+            }
 
             return true;
         }
 
+        static void Postfix(Movement __instance)
+        {
+            var playback = Object.FindAnyObjectByType<ReplayPlayback>();
+            if (playback != null && playback.IsPlaying)
+                playback.PostMovementUpdate();
+        }
     }
+
+    /// <summary>
 
     /// <summary>
     /// Harmony patch: postfix on Movement.respawn to restart recording on death.
