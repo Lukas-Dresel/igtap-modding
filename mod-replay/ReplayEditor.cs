@@ -267,8 +267,8 @@ namespace IGTAPReplay
             }
 
             var parts = new List<string>();
-            foreach (var k in added) parts.Add("+" + k);
-            foreach (var k in removed) parts.Add("-" + k);
+            foreach (var k in added) parts.Add("+" + KeyNames.ToShortName(k));
+            foreach (var k in removed) parts.Add("-" + KeyNames.ToShortName(k));
             string labelText = string.Join(" ", parts);
 
             SpawnLiveGhost(p, labelText, added.Count > 0);
@@ -349,8 +349,8 @@ namespace IGTAPReplay
                 if (added.Count > 0 || removed.Count > 0)
                 {
                     var parts = new List<string>();
-                    foreach (var k in added) parts.Add("+" + k);
-                    foreach (var k in removed) parts.Add("-" + k);
+                    foreach (var k in added) parts.Add("+" + KeyNames.ToShortName(k));
+                    foreach (var k in removed) parts.Add("-" + KeyNames.ToShortName(k));
 
                     replayGhosts.Add(new ReplayGhost
                     {
@@ -725,7 +725,7 @@ namespace IGTAPReplay
                 {
                     float startSec = (float)spanStart / timestep;
                     float endSec = (float)spanEnd / timestep;
-                    string keyList = string.Join(", ", keys.OrderBy(k => k));
+                    string keyList = string.Join(", ", keys.Select(k => KeyNames.ToShortName(k)).OrderBy(k => k));
                     tooltipText = $"Keys: {keyList}\nFrames {spanStart}-{spanEnd}  ({startSec:F2}s - {endSec:F2}s)";
                     tooltipPos = mouse;
                 }
@@ -1017,21 +1017,7 @@ namespace IGTAPReplay
         {
             var parts = new List<string>();
             foreach (var k in keys.OrderBy(x => x))
-            {
-                switch (k)
-                {
-                    case "space": parts.Add("SPC"); break;
-                    case "lshift": parts.Add("DASH"); break;
-                    case "a": parts.Add("L"); break;
-                    case "d": parts.Add("R"); break;
-                    case "w": parts.Add("U"); break;
-                    case "s": parts.Add("D"); break;
-                    case "mouse0": parts.Add("M1"); break;
-                    case "mouse1": parts.Add("M2"); break;
-                    case "mouse2": parts.Add("M3"); break;
-                    default: parts.Add(k.ToUpper()); break;
-                }
-            }
+                parts.Add(KeyNames.ToTimelineLabel(k));
             return string.Join(" ", parts);
         }
 

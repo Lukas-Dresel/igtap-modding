@@ -123,7 +123,9 @@ namespace IGTAPReplay
                     ci++;
                 }
 
-                string keys = span.Keys.Count > 0 ? string.Join(" ", span.Keys.OrderBy(k => k)) : ".";
+                string keys = span.Keys.Count > 0
+                    ? string.Join(" ", span.Keys.Select(k => KeyNames.ToShortName(k)).OrderBy(k => k))
+                    : ".";
                 string mousePart = span.MousePos.HasValue
                     ? $" @{F(span.MousePos.Value.x)},{F(span.MousePos.Value.y)}"
                     : "";
@@ -198,7 +200,7 @@ namespace IGTAPReplay
                     }
                     else
                     {
-                        keys.Add(parts[i]);
+                        keys.Add(KeyNames.ToPath(parts[i]));
                     }
                 }
 
