@@ -12,8 +12,8 @@ igtap/
 ├── mod-dashplus/                # Dash+ mod - diagonal and vertical dashing
 ├── mod-inputviz/                # Input Viz mod - on-screen input/status overlay
 ├── mod-minimap/                 # Minimap mod - in-game map overlay with multiple view modes
-├── mod-checkpoint/               # Checkpoint mod - custom save/teleport checkpoints with clone ghosts
-├── mod-fixedtimestep/            # Fixed Timestep mod - locks deltaTime for deterministic physics
+├── mod-checkpoint/              # Checkpoint mod - custom save/teleport checkpoints with clone ghosts
+├── mod-fixedtimestep/           # Fixed Timestep mod - locks deltaTime for deterministic physics
 ├── mod-replay/                  # Replay mod - record/replay inputs with timeline editor
 ├── mod-IMPORTED-HitboxViewer/   # (Imported) Hitbox Viewer - collision volume visualization
 ├── mod-IMPORTED-IGTAS/          # (Imported) IGTAS - tool-assisted speedrun input recording/playback
