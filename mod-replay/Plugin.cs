@@ -10,7 +10,7 @@ namespace IGTAPReplay
 {
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency("com.igtapmod.plugin")]
-    [BepInDependency("com.igtapmod.fixedtimestep")]
+    [BepInDependency("com.igtapmod.fixedtimestep", BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {
         public const string PluginGUID = "com.igtapmod.replay";
@@ -30,6 +30,9 @@ namespace IGTAPReplay
         internal static ConfigEntry<string> ReplayFilePath;
         internal static ConfigEntry<bool> RecordMousePosition;
         internal static ConfigEntry<bool> RestartOnRespawn;
+
+        // Debug
+        internal static ConfigEntry<bool> PerFrameCheckpoints;
 
         // Timeline
         internal static ConfigEntry<bool> TimelineFullReplay;
@@ -68,6 +71,8 @@ namespace IGTAPReplay
                 "Record mouse screen position each frame (bloats the file, usually not needed)");
             RestartOnRespawn = Config.Bind("General", "RestartOnRespawn", false,
                 "Automatically restart recording when the player respawns (discards previous recording)");
+            PerFrameCheckpoints = Config.Bind("Debug", "PerFrameCheckpoints", false,
+                "Record a checkpoint every single frame (large files, for debugging desync)");
 
             TimelineFullReplay = Config.Bind("Timeline", "ShowFullTimeline", false,
                 "Show the full replay timeline instead of a +/-5s window around the playhead");
@@ -287,10 +292,17 @@ namespace IGTAPReplay
     [HarmonyPatch(typeof(Movement), "Update")]
     public static class MovementUpdatePatch
     {
-        static void Prefix(Movement __instance)
+        static bool Prefix(Movement __instance)
         {
             if (ReplayRecorder.IsRecording)
                 ReplayRecorder.OnFrame(__instance);
+
+            // Skip Movement.Update on the frame playback starts (before virtual input is ready)
+            var playback = Object.FindAnyObjectByType<ReplayPlayback>();
+            if (playback != null && playback.IsPlaying && !playback.ShouldMovementUpdate())
+                return false;
+
+            return true;
         }
     }
 

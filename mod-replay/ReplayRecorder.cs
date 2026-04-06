@@ -62,12 +62,17 @@ namespace IGTAPReplay
             prevKeys.Clear();
             prevMousePos = Vector2.zero;
 
+            var initialState = ReplayState.Capture(player);
             replayFile = new ReplayFile
             {
                 RecordedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                 Timestep = Time.captureFramerate > 0 ? Time.captureFramerate : 50,
-                InitialState = ReplayState.Capture(player),
+                InitialState = initialState,
                 Bindings = new List<BindingSnapshot> { CaptureBindings(player, 0) },
+                Checkpoints = new List<ReplayCheckpoint>
+                {
+                    new ReplayCheckpoint { Frame = 0, SpanIndex = 0, State = initialState }
+                },
             };
 
             recording = true;
@@ -77,6 +82,11 @@ namespace IGTAPReplay
         public static ReplayFile StopRecording()
         {
             if (!recording) return null;
+
+            // Final checkpoint at the end of recording
+            if (trackedPlayer != null)
+                CaptureCheckpoint(trackedPlayer);
+
             recording = false;
             trackedPlayer = null;
 
@@ -113,7 +123,7 @@ namespace IGTAPReplay
                     {
                         var ctrl = keyboard[key];
                         if (ctrl != null && ctrl.isPressed)
-                            currentKeys.Add(KeyName(key));
+                            currentKeys.Add("<Keyboard>/" + ctrl.name);
                     }
                     catch
                     {
@@ -125,11 +135,33 @@ namespace IGTAPReplay
             // Mouse buttons
             if (mouse != null)
             {
-                if (mouse.leftButton.isPressed) currentKeys.Add("mouse0");
-                if (mouse.rightButton.isPressed) currentKeys.Add("mouse1");
-                if (mouse.middleButton.isPressed) currentKeys.Add("mouse2");
-                if (mouse.forwardButton.isPressed) currentKeys.Add("mouse3");
-                if (mouse.backButton.isPressed) currentKeys.Add("mouse4");
+                if (mouse.leftButton.isPressed) currentKeys.Add("<Mouse>/leftButton");
+                if (mouse.rightButton.isPressed) currentKeys.Add("<Mouse>/rightButton");
+                if (mouse.middleButton.isPressed) currentKeys.Add("<Mouse>/middleButton");
+                if (mouse.forwardButton.isPressed) currentKeys.Add("<Mouse>/forwardButton");
+                if (mouse.backButton.isPressed) currentKeys.Add("<Mouse>/backButton");
+            }
+
+            // Gamepad buttons
+            var gamepad = Gamepad.current;
+            if (gamepad != null)
+            {
+                if (gamepad.buttonSouth.isPressed) currentKeys.Add("<Gamepad>/buttonSouth");
+                if (gamepad.buttonNorth.isPressed) currentKeys.Add("<Gamepad>/buttonNorth");
+                if (gamepad.buttonEast.isPressed) currentKeys.Add("<Gamepad>/buttonEast");
+                if (gamepad.buttonWest.isPressed) currentKeys.Add("<Gamepad>/buttonWest");
+                if (gamepad.leftShoulder.isPressed) currentKeys.Add("<Gamepad>/leftShoulder");
+                if (gamepad.rightShoulder.isPressed) currentKeys.Add("<Gamepad>/rightShoulder");
+                if (gamepad.leftTrigger.isPressed) currentKeys.Add("<Gamepad>/leftTrigger");
+                if (gamepad.rightTrigger.isPressed) currentKeys.Add("<Gamepad>/rightTrigger");
+                if (gamepad.startButton.isPressed) currentKeys.Add("<Gamepad>/start");
+                if (gamepad.selectButton.isPressed) currentKeys.Add("<Gamepad>/select");
+                if (gamepad.dpad.up.isPressed) currentKeys.Add("<Gamepad>/dpad/up");
+                if (gamepad.dpad.down.isPressed) currentKeys.Add("<Gamepad>/dpad/down");
+                if (gamepad.dpad.left.isPressed) currentKeys.Add("<Gamepad>/dpad/left");
+                if (gamepad.dpad.right.isPressed) currentKeys.Add("<Gamepad>/dpad/right");
+                if (gamepad.leftStickButton.isPressed) currentKeys.Add("<Gamepad>/leftStickButton");
+                if (gamepad.rightStickButton.isPressed) currentKeys.Add("<Gamepad>/rightStickButton");
             }
 
             // Mouse position (screen coords) — only if enabled in config
@@ -173,6 +205,28 @@ namespace IGTAPReplay
                     Velocity = body.linearVelocity,
                 });
             }
+
+            // Checkpoint: every second + every input change, or every frame in debug mode
+            bool isSecondBoundary = frameCounter % (replayFile.Timestep > 0 ? replayFile.Timestep : 50) == 0;
+            if (Plugin.PerFrameCheckpoints.Value || isSecondBoundary || keysChanged)
+            {
+                CaptureCheckpoint(player);
+            }
+        }
+
+        private static void CaptureCheckpoint(Movement player)
+        {
+            int si = 0;
+            for (int i = replayFile.Spans.Count - 1; i >= 0; i--)
+            {
+                if (replayFile.Spans[i].Frame <= frameCounter) { si = i; break; }
+            }
+            replayFile.Checkpoints.Add(new ReplayCheckpoint
+            {
+                Frame = frameCounter,
+                SpanIndex = si,
+                State = ReplayState.Capture(player),
+            });
         }
 
         private static BindingSnapshot CaptureBindings(Movement player, int frame)
@@ -200,12 +254,10 @@ namespace IGTAPReplay
                 var binding = action.bindings[i];
                 if (binding.isComposite) continue;
 
-                // Extract the key name from the path, e.g. "<Keyboard>/space" -> "space"
+                // Store the full effective path as-is, e.g. "<Keyboard>/space", "<Mouse>/leftButton"
                 var path = binding.effectivePath;
-                if (string.IsNullOrEmpty(path)) continue;
-                var slash = path.LastIndexOf('/');
-                if (slash >= 0)
-                    keys.Add(path.Substring(slash + 1).ToLower());
+                if (!string.IsNullOrEmpty(path))
+                    keys.Add(path);
             }
 
             return keys;

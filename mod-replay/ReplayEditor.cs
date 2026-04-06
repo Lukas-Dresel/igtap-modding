@@ -83,10 +83,7 @@ namespace IGTAPReplay
         /// <summary>Pause from external call (e.g. playback finished).</summary>
         public void PausePlayback()
         {
-            paused = true;
-            Time.timeScale = 0f;
-            var playback = FindAnyObjectByType<ReplayPlayback>();
-            if (playback != null) playback.IsPaused = true;
+            if (!paused) Pause();
         }
 
         // --- Begin/End for recording ---
@@ -131,6 +128,17 @@ namespace IGTAPReplay
         {
             if (player == null || editorMode == EditorMode.None) return;
 
+            // Sync pause state from playback (seeking finished → playback set paused=true)
+            if (editorMode == EditorMode.Replay)
+            {
+                var playback = FindAnyObjectByType<ReplayPlayback>();
+                if (playback != null && playback.IsPaused && !paused)
+                {
+                    paused = true;
+                    Time.timeScale = 0f;
+                }
+            }
+
             var keyboard = Keyboard.current;
             if (keyboard == null) return;
 
@@ -140,6 +148,9 @@ namespace IGTAPReplay
                 if (paused) Resume();
                 else Pause();
             }
+
+            if (paused)
+                HandleStepping(keyboard);
 
             // Live marker cleanup (recording)
             if (editorMode == EditorMode.Recording)
@@ -172,9 +183,44 @@ namespace IGTAPReplay
             Time.timeScale = savedTimeScale;
 
             var playback = FindAnyObjectByType<ReplayPlayback>();
-            if (playback != null) playback.IsPaused = false;
+            if (playback != null)
+            {
+                playback.IsPaused = false;
+                // If replay was finished, unfinish so it can continue/re-seek
+            }
 
             Plugin.Instance.ShowToast("Resumed");
+        }
+
+        private void HandleStepping(Keyboard keyboard)
+        {
+            bool stepForward = keyboard.rightArrowKey.wasPressedThisFrame;
+            bool stepBackward = keyboard.leftArrowKey.wasPressedThisFrame;
+            bool stepSecFwd = false;
+            bool stepSecBack = false;
+
+            var mouse = Mouse.current;
+            if (mouse != null)
+            {
+                float scroll = mouse.scroll.ReadValue().y;
+                if (scroll > 0.5f) stepForward = true;
+                else if (scroll < -0.5f) stepBackward = true;
+            }
+
+            // Shift+arrow for 1 second steps
+            if (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed)
+            {
+                if (stepForward) { stepForward = false; stepSecFwd = true; }
+                if (stepBackward) { stepBackward = false; stepSecBack = true; }
+            }
+
+            var playback = FindAnyObjectByType<ReplayPlayback>();
+            int timestep = replayFile?.Timestep ?? 50;
+
+            if (stepForward) StepFrames(1);
+            else if (stepSecFwd) StepFrames(timestep);
+            else if (stepBackward) StepFrames(-1);
+            else if (stepSecBack) StepFrames(-timestep);
         }
 
         // ===========================
@@ -736,7 +782,9 @@ namespace IGTAPReplay
                 int targetFrame = frameStart + Mathf.RoundToInt(frac * totalFrames);
                 targetFrame = Mathf.Max(1, targetFrame);
 
-                PlayUntil(targetFrame);
+                paused = false;
+                Time.timeScale = savedTimeScale;
+                playback.SeekToFrame(targetFrame);
                 e.Use();
             }
 
@@ -759,27 +807,46 @@ namespace IGTAPReplay
             float speedBtnW = 40f;
 
             // Calculate total width of controls to center them
-            float controlsWidth = btnW                            // play/pause button
-                + gap * 3                                         // spacer before speed
-                + 44f                                             // "Speed:" label
-                + SpeedOptions.Length * (speedBtnW + 2f)          // speed buttons
-                + gap * 3                                         // spacer before toggle
-                + 100f;                                           // toggle
+            // |<< |< ▶ >| >>| gap Speed: [0.1x][0.25x][0.5x][1x][2x][4x] gap [Full timeline]
+            float controlsWidth = btnW * 5 + gap * 4       // 5 buttons + gaps
+                + gap * 3                                     // spacer before speed
+                + 44f                                         // "Speed:" label
+                + SpeedOptions.Length * (speedBtnW + 2f)      // speed buttons
+                + gap * 3                                     // spacer before toggle
+                + 100f;                                       // toggle
 
             // Background
             GUI.DrawTexture(new Rect(barX, barY, barW, btnH), timelineBgTex);
 
             float x = barX + (barW - controlsWidth) / 2f;
 
+            // |<< back 1 second
+            if (GUI.Button(new Rect(x, barY, btnW, btnH), "|<<"))
+                StepFrames(-timestep);
+            x += btnW + gap;
+
+            // |< back 1 frame
+            if (GUI.Button(new Rect(x, barY, btnW, btnH), "|<"))
+                StepFrames(-1);
+            x += btnW + gap;
+
             // Play / Pause
-            var playback = FindAnyObjectByType<ReplayPlayback>();
-            bool isSeeking = playback != null && playback.IsSeeking;
-            string playLabel = (paused && !isSeeking) ? "\u25B6" : "\u2016"; // ▶ or ‖
+            string playLabel = paused ? "\u25B6" : "\u2016"; // ▶ or ‖
             if (GUI.Button(new Rect(x, barY, btnW, btnH), playLabel))
             {
                 if (paused) Resume();
                 else Pause();
             }
+            x += btnW + gap;
+
+            // >| forward 1 frame
+            if (GUI.Button(new Rect(x, barY, btnW, btnH), ">|"))
+                StepFrames(1);
+            x += btnW + gap;
+
+            // >>| forward 1 second
+            if (GUI.Button(new Rect(x, barY, btnW, btnH), ">>|"))
+                StepFrames(timestep);
             x += btnW + gap * 3;
 
             // Speed selector
@@ -818,18 +885,44 @@ namespace IGTAPReplay
                 Plugin.TimelineFullReplay.Value = newFull;
         }
 
-        private void PlayUntil(int targetFrame)
+        private void StepFrames(int frames)
         {
-            if (editorMode != EditorMode.Replay) return;
-            var playback = FindAnyObjectByType<ReplayPlayback>();
-            if (playback == null) return;
+            if (frames == 0) return;
 
-            // Ensure timeScale is normal for the simulation to run
-            if (Time.timeScale == 0f)
-                Time.timeScale = savedTimeScale > 0f ? savedTimeScale : 1f;
+            if (editorMode == EditorMode.Replay)
+            {
+                var playback = FindAnyObjectByType<ReplayPlayback>();
+                if (playback == null) return;
 
-            playback.PlayUntilFrame(targetFrame);
-            paused = false; // we're playing until target
+                int target = Mathf.Max(1, playback.FrameCount + frames);
+
+                // SeekToFrame restores a checkpoint if going backward,
+                // then runs the game forward to the target via Update().
+                // It auto-pauses when the target is reached.
+                // We need timeScale > 0 so the game actually simulates.
+                paused = false;
+                Time.timeScale = savedTimeScale;
+                playback.SeekToFrame(target);
+                // playback.Update() will run each frame and set paused=true when done.
+                // We sync our paused state from playback in Update().
+            }
+            else
+            {
+                // Recording: step forward by briefly unpausing
+                if (frames > 0)
+                {
+                    if (!paused) Pause();
+                    StartCoroutine(RunRecordingFrames(frames));
+                }
+            }
+        }
+
+        private System.Collections.IEnumerator RunRecordingFrames(int frames)
+        {
+            Time.timeScale = savedTimeScale;
+            for (int i = 0; i < frames; i++)
+                yield return null;
+            Time.timeScale = 0f;
         }
 
         private void DrawTooltip(Vector2 pos, string text)

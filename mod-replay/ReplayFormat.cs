@@ -47,6 +47,16 @@ namespace IGTAPReplay
     }
 
     /// <summary>
+    /// Full state checkpoint for seeking during playback.
+    /// </summary>
+    public struct ReplayCheckpoint
+    {
+        public int Frame;
+        public int SpanIndex;
+        public ReplayState.Snapshot State;
+    }
+
+    /// <summary>
     /// Complete replay file data model.
     /// </summary>
     public class ReplayFile
@@ -58,6 +68,7 @@ namespace IGTAPReplay
         public List<BindingSnapshot> Bindings = new List<BindingSnapshot>();
         public List<InputSpan> Spans = new List<InputSpan>();
         public List<VerifyPoint> VerifyPoints = new List<VerifyPoint>();
+        public List<ReplayCheckpoint> Checkpoints = new List<ReplayCheckpoint>();
     }
 
     /// <summary>
@@ -73,17 +84,6 @@ namespace IGTAPReplay
             sb.AppendLine("# IGTAP Replay v1");
             sb.AppendLine($"# Recorded: {file.RecordedAt}");
             sb.AppendLine($"# Timestep: {file.Timestep}");
-            sb.AppendLine($"# StartPos: {F(snap.Position.x)} {F(snap.Position.y)}");
-            sb.AppendLine($"# StartVel: {F(snap.Velocity.x)} {F(snap.Velocity.y)}");
-            sb.AppendLine($"# Momentum: {F(snap.Momentum.x)} {F(snap.Momentum.y)}");
-            sb.AppendLine($"# FacingRight: {B(snap.FacingRight)}");
-            sb.AppendLine($"# OnGround: {B(snap.OnGround)}");
-            sb.AppendLine($"# CutsceneMode: {snap.CutsceneMode}");
-            sb.AppendLine($"# Unlocks: dash={B(snap.DashUnlocked)} wallJump={B(snap.WallJumpUnlocked)} doubleJump={B(snap.DoubleJumpUnlocked)} blockSwap={B(snap.BlockSwapUnlocked)}");
-            sb.AppendLine($"# MaxAirDashes: {snap.MaxAirDashes}");
-            sb.AppendLine($"# MaxAirJumps: {snap.MaxAirJumps}");
-            sb.AppendLine($"# MaxWallJumps: {snap.MaxWallJumps}");
-            sb.AppendLine($"# RespawnPoint: {F(snap.RespawnPoint.x)} {F(snap.RespawnPoint.y)}");
 
             foreach (var binding in file.Bindings)
             {
@@ -98,8 +98,9 @@ namespace IGTAPReplay
 
             sb.AppendLine();
 
-            // Interleave spans and verify points in frame order
+            // Interleave spans, verify points, and checkpoints in frame order
             int vi = 0;
+            int ci = 0;
             foreach (var span in file.Spans)
             {
                 // Write any verify points before this span
@@ -110,6 +111,15 @@ namespace IGTAPReplay
                     vi++;
                 }
 
+                // Write any checkpoints before this span
+                while (ci < file.Checkpoints.Count && file.Checkpoints[ci].Frame <= span.Frame)
+                {
+                    var cp = file.Checkpoints[ci];
+                    string json = JsonUtility.ToJson(cp.State);
+                    sb.AppendLine($"# !CP {cp.Frame} {cp.SpanIndex} {json}");
+                    ci++;
+                }
+
                 string keys = span.Keys.Count > 0 ? string.Join(" ", span.Keys.OrderBy(k => k)) : ".";
                 string mousePart = span.MousePos.HasValue
                     ? $" @{F(span.MousePos.Value.x)},{F(span.MousePos.Value.y)}"
@@ -117,12 +127,19 @@ namespace IGTAPReplay
                 sb.AppendLine($"{span.Frame,-8} {keys}{mousePart}");
             }
 
-            // Write remaining verify points
+            // Write remaining verify points and checkpoints
             while (vi < file.VerifyPoints.Count)
             {
                 var vp = file.VerifyPoints[vi];
                 sb.AppendLine($"# @{vp.Frame} pos={F(vp.Position.x)},{F(vp.Position.y)} vel={F(vp.Velocity.x)},{F(vp.Velocity.y)}");
                 vi++;
+            }
+            while (ci < file.Checkpoints.Count)
+            {
+                var cp = file.Checkpoints[ci];
+                string json = JsonUtility.ToJson(cp.State);
+                sb.AppendLine($"# !CP {cp.Frame} {cp.SpanIndex} {json}");
+                ci++;
             }
 
             File.WriteAllText(path, sb.ToString());
@@ -179,6 +196,10 @@ namespace IGTAPReplay
                 file.Spans.Add(new InputSpan { Frame = frame, Keys = keys, MousePos = mousePos });
             }
 
+            // Set InitialState from frame-0 checkpoint if available
+            if (file.Checkpoints.Count > 0 && file.Checkpoints[0].Frame == 0)
+                file.InitialState = file.Checkpoints[0].State;
+
             return file;
         }
 
@@ -202,82 +223,34 @@ namespace IGTAPReplay
                 if (int.TryParse(content.Substring("Timestep: ".Length), out int ts))
                     file.Timestep = ts;
             }
-            else if (content.StartsWith("StartPos: "))
-            {
-                var v = ParseVec2(content.Substring("StartPos: ".Length));
-                file.InitialState.Position = v;
-            }
-            else if (content.StartsWith("StartVel: "))
-            {
-                var v = ParseVec2(content.Substring("StartVel: ".Length));
-                file.InitialState.Velocity = v;
-            }
-            else if (content.StartsWith("Momentum: "))
-            {
-                var v = ParseVec2(content.Substring("Momentum: ".Length));
-                file.InitialState.Momentum = v;
-            }
-            else if (content.StartsWith("FacingRight: "))
-            {
-                file.InitialState.FacingRight = content.Substring("FacingRight: ".Length) == "true";
-            }
-            else if (content.StartsWith("OnGround: "))
-            {
-                file.InitialState.OnGround = content.Substring("OnGround: ".Length) == "true";
-            }
-            else if (content.StartsWith("CutsceneMode: "))
-            {
-                if (Enum.TryParse(content.Substring("CutsceneMode: ".Length), out Movement.cutsceneModes mode))
-                    file.InitialState.CutsceneMode = mode;
-            }
-            else if (content.StartsWith("Unlocks: "))
-            {
-                ParseUnlocks(file, content.Substring("Unlocks: ".Length));
-            }
-            else if (content.StartsWith("MaxAirDashes: "))
-            {
-                if (int.TryParse(content.Substring("MaxAirDashes: ".Length), out int v))
-                    file.InitialState.MaxAirDashes = v;
-            }
-            else if (content.StartsWith("MaxAirJumps: "))
-            {
-                if (int.TryParse(content.Substring("MaxAirJumps: ".Length), out int v))
-                    file.InitialState.MaxAirJumps = v;
-            }
-            else if (content.StartsWith("MaxWallJumps: "))
-            {
-                if (int.TryParse(content.Substring("MaxWallJumps: ".Length), out int v))
-                    file.InitialState.MaxWallJumps = v;
-            }
-            else if (content.StartsWith("RespawnPoint: "))
-            {
-                file.InitialState.RespawnPoint = ParseVec2(content.Substring("RespawnPoint: ".Length));
-            }
             else if (content.StartsWith("Bindings"))
             {
                 ParseBindings(file, content);
             }
+            else if (content.StartsWith("!CP "))
+            {
+                // "!CP <frame> <spanIndex> <json>"
+                var rest = content.Substring(4);
+                var spaceIdx1 = rest.IndexOf(' ');
+                if (spaceIdx1 < 0) return;
+                var spaceIdx2 = rest.IndexOf(' ', spaceIdx1 + 1);
+                if (spaceIdx2 < 0) return;
+
+                if (!int.TryParse(rest.Substring(0, spaceIdx1), out int cpFrame)) return;
+                if (!int.TryParse(rest.Substring(spaceIdx1 + 1, spaceIdx2 - spaceIdx1 - 1), out int cpSpan)) return;
+                string json = rest.Substring(spaceIdx2 + 1);
+
+                var state = JsonUtility.FromJson<ReplayState.Snapshot>(json);
+                file.Checkpoints.Add(new ReplayCheckpoint
+                {
+                    Frame = cpFrame,
+                    SpanIndex = cpSpan,
+                    State = state,
+                });
+            }
             else if (content.StartsWith("@"))
             {
                 ParseVerifyPoint(file, content);
-            }
-        }
-
-        private static void ParseUnlocks(ReplayFile file, string s)
-        {
-            // "dash=true wallJump=true doubleJump=false blockSwap=false"
-            foreach (var part in s.Split(' '))
-            {
-                var kv = part.Split('=');
-                if (kv.Length != 2) continue;
-                bool val = kv[1] == "true";
-                switch (kv[0])
-                {
-                    case "dash": file.InitialState.DashUnlocked = val; break;
-                    case "wallJump": file.InitialState.WallJumpUnlocked = val; break;
-                    case "doubleJump": file.InitialState.DoubleJumpUnlocked = val; break;
-                    case "blockSwap": file.InitialState.BlockSwapUnlocked = val; break;
-                }
             }
         }
 

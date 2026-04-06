@@ -17,16 +17,16 @@
       <HintPath>$(ManagedDir)/UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule">
+      <HintPath>$(ManagedDir)/UnityEngine.JSONSerializeModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
       <HintPath>$(ManagedDir)/UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="IGTAPMod">
       <HintPath>$(BepInExDir)/plugins/IGTAPMod.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="IGTAPFixedTimestep">
-      <HintPath>$(BepInExDir)/plugins/IGTAPFixedTimestep.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
