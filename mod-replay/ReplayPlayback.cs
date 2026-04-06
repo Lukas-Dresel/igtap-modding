@@ -22,6 +22,9 @@ namespace IGTAPReplay
         private Mouse virtualMouse;
         private Gamepad virtualGamepad;
         private Mouse savedMouse;
+        private Keyboard realKeyboard;
+        private Mouse realMouse;
+        private Gamepad realGamepad;
         private readonly List<InputDevice> disabledDevices = new List<InputDevice>();
 
         // Names of our virtual devices so we can skip them when disabling
@@ -99,8 +102,15 @@ namespace IGTAPReplay
 
             lastMousePos = Vector2.zero;
 
-            // Save real mouse before adding virtual one
-            savedMouse = Mouse.current;
+            // Remove real devices so they can't interfere during playback.
+            // UnityEngine.Input (old API) still works for F7 since it reads from OS.
+            realKeyboard = Keyboard.current;
+            realMouse = Mouse.current;
+            realGamepad = Gamepad.current;
+            savedMouse = realMouse;
+            if (realKeyboard != null) InputSystem.RemoveDevice(realKeyboard);
+            if (realMouse != null) InputSystem.RemoveDevice(realMouse);
+            if (realGamepad != null) InputSystem.RemoveDevice(realGamepad);
 
             // Create virtual devices
             virtualKeyboard = InputSystem.AddDevice<Keyboard>("ReplayKeyboard");
@@ -140,12 +150,13 @@ namespace IGTAPReplay
                 virtualGamepad = null;
             }
 
-            // Restore Mouse.current if it got wiped
-            if (Mouse.current == null && savedMouse != null)
-            {
-                try { InputSystem.AddDevice(savedMouse); }
-                catch { /* already there */ }
-            }
+            // Re-add real devices
+            if (realKeyboard != null) { try { InputSystem.AddDevice(realKeyboard); } catch {} }
+            if (realMouse != null) { try { InputSystem.AddDevice(realMouse); } catch {} }
+            if (realGamepad != null) { try { InputSystem.AddDevice(realGamepad); } catch {} }
+            realKeyboard = null;
+            realMouse = null;
+            realGamepad = null;
             savedMouse = null;
 
             // Restore original bindings

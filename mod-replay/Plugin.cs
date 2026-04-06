@@ -115,9 +115,9 @@ namespace IGTAPReplay
             {
                 StartPlaying();
             }
-            else if (StopKey.Value.IsDown() && mode != Mode.Idle)
+            else if (mode != Mode.Idle &&
+                     (StopKey.Value.IsDown() || UnityEngine.Input.GetKeyDown(StopKey.Value.MainKey)))
             {
-                // Defer stop to end of frame so it doesn't corrupt mid-frame state
                 StartCoroutine(StopEndOfFrame());
             }
         }
@@ -205,6 +205,9 @@ namespace IGTAPReplay
 
             mode = Mode.Idle;
         }
+
+        /// <summary>Called by the Exit button on the transport bar.</summary>
+        internal void RequestStop() => StartCoroutine(StopEndOfFrame());
 
         /// <summary>Called by ReplayPlayback when it reaches the end of the replay.</summary>
         internal void OnPlaybackFinished()

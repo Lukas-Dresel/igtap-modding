@@ -800,14 +800,17 @@ namespace IGTAPReplay
             var speedStyle = new GUIStyle(GUI.skin.button) { fontSize = 11 };
             float speedBtnW = 40f;
 
+            float exitBtnW = 44f;
+
             // Calculate total width of controls to center them
-            // |<< |< ▶ >| >>| gap Speed: [0.1x][0.25x][0.5x][1x][2x][4x] gap [Full timeline]
             float controlsWidth = btnW * 5 + gap * 4       // 5 buttons + gaps
                 + gap * 3                                     // spacer before speed
                 + 44f                                         // "Speed:" label
                 + SpeedOptions.Length * (speedBtnW + 2f)      // speed buttons
                 + gap * 3                                     // spacer before toggle
-                + 100f;                                       // toggle
+                + 100f                                        // toggle
+                + gap * 3                                     // spacer before exit
+                + exitBtnW;                                   // exit button
 
             // Background
             GUI.DrawTexture(new Rect(barX, barY, barW, btnH), timelineBgTex);
@@ -877,6 +880,14 @@ namespace IGTAPReplay
                 fullTl, "Full timeline");
             if (newFull != fullTl)
                 Plugin.TimelineFullReplay.Value = newFull;
+            x += toggleW + gap * 3;
+
+            // Exit replay
+            var prevExitBg = GUI.backgroundColor;
+            GUI.backgroundColor = new Color(0.8f, 0.2f, 0.2f);
+            if (GUI.Button(new Rect(x, barY, exitBtnW, btnH), "Exit"))
+                Plugin.Instance.RequestStop();
+            GUI.backgroundColor = prevExitBg;
         }
 
         private void StepFrames(int frames)
