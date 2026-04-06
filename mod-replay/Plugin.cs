@@ -18,6 +18,12 @@ namespace IGTAPReplay
         public const string PluginVersion = "1.0.0";
 
         internal static ManualLogSource Log;
+
+        internal static void DbgLog(string msg)
+        {
+            if (DebugLifecycleLogging != null && DebugLifecycleLogging.Value)
+                Log.LogInfo($"[DBG] {msg}");
+        }
         internal static Plugin Instance;
         internal static Harmony HarmonyInstance;
 
@@ -33,6 +39,7 @@ namespace IGTAPReplay
 
         // Debug
         internal static ConfigEntry<bool> PerFrameCheckpoints;
+        internal static ConfigEntry<bool> DebugLifecycleLogging;
 
         // Timeline
         internal static ConfigEntry<bool> TimelineFullReplay;
@@ -73,6 +80,8 @@ namespace IGTAPReplay
                 "Automatically restart recording when the player respawns (discards previous recording)");
             PerFrameCheckpoints = Config.Bind("Debug", "PerFrameCheckpoints", false,
                 "Record a checkpoint every single frame (large files, for debugging desync)");
+            DebugLifecycleLogging = Config.Bind("Debug", "LifecycleLogging", false,
+                "Log every lifecycle event: inject, skip, seek, pause, resume, step, etc.");
 
             TimelineFullReplay = Config.Bind("Timeline", "ShowFullTimeline", false,
                 "Show the full replay timeline instead of a +/-5s window around the playhead");
@@ -305,20 +314,24 @@ namespace IGTAPReplay
     {
         static bool Prefix(Movement __instance)
         {
-            // Record input in the same prefix where Movement is about to read it
+            Plugin.DbgLog($"Movement.Update PREFIX playing={Object.FindAnyObjectByType<ReplayPlayback>()?.IsPlaying} recording={ReplayRecorder.IsRecording} timeScale={Time.timeScale}");
+
             if (ReplayRecorder.IsRecording)
                 ReplayRecorder.OnFrame(__instance);
 
-            // During playback: inject input then let Movement run
             var playback = Object.FindAnyObjectByType<ReplayPlayback>();
             if (playback != null && playback.IsPlaying)
             {
                 if (!playback.ShouldMovementUpdate())
+                {
+                    Plugin.DbgLog("Movement.Update PREFIX -> SKIP (ShouldMovementUpdate=false)");
                     return false;
+                }
 
                 playback.InjectCurrentFrame();
             }
 
+            Plugin.DbgLog("Movement.Update PREFIX -> RUN");
             return true;
         }
 
@@ -326,7 +339,10 @@ namespace IGTAPReplay
         {
             var playback = Object.FindAnyObjectByType<ReplayPlayback>();
             if (playback != null && playback.IsPlaying)
+            {
+                Plugin.DbgLog($"Movement.Update POSTFIX fc={playback.FrameCount}");
                 playback.PostMovementUpdate();
+            }
         }
     }
 
@@ -340,6 +356,7 @@ namespace IGTAPReplay
     {
         static void Postfix(Movement __instance)
         {
+            Plugin.DbgLog("Movement.respawn POSTFIX");
             Plugin.Instance?.OnPlayerRespawned(__instance);
         }
     }

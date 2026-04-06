@@ -44,6 +44,9 @@ namespace IGTAPReplay
         private bool seeking;
         private int seekTarget;
 
+        /// <summary>If > 0, auto-pause when frameCounter reaches this value.</summary>
+        public int PauseOnFrame;
+
         // Checkpoint validation index
         private int checkpointIndex;
 
@@ -63,6 +66,20 @@ namespace IGTAPReplay
             if (skipNextMovementUpdate)
             {
                 skipNextMovementUpdate = false;
+                Plugin.DbgLog("ShouldMovementUpdate: SKIPPED (startup frame)");
+                return false;
+            }
+            // When paused (and not seeking), skip Movement.Update entirely
+            if (paused && !seeking)
+            {
+                var body = (Rigidbody2D)ReplayState.F_body.GetValue(player);
+                Plugin.DbgLog($"ShouldMovementUpdate: SKIPPED (paused) vel=({body.linearVelocityX:F1},{body.linearVelocityY:F1}) pos=({body.position.x:F1},{body.position.y:F1})");
+                return false;
+            }
+            // Skip dt=0 frames (timeScale just switched, Movement would be a no-op at best)
+            if (Time.deltaTime == 0f)
+            {
+                Plugin.DbgLog("ShouldMovementUpdate: SKIPPED (dt=0)");
                 return false;
             }
             return true;
@@ -180,17 +197,18 @@ namespace IGTAPReplay
             targetFrame = Mathf.Max(1, targetFrame);
             finished = false;
 
+            Plugin.DbgLog($"SeekToFrame target={targetFrame} current={frameCounter}");
+
             if (targetFrame <= frameCounter)
             {
-                // Backward seek: restore nearest checkpoint at or before target
                 RestoreCheckpointBefore(targetFrame);
+                Plugin.DbgLog($"SeekToFrame restored checkpoint, now at fc={frameCounter}");
             }
 
-            // Now forward-seek by letting the game actually run
             seeking = true;
             seekTarget = targetFrame;
             paused = false;
-            // Update() will advance frame by frame and pause when seekTarget is reached
+            Plugin.DbgLog($"SeekToFrame set seeking=true target={seekTarget} paused=false timeScale={Time.timeScale}");
         }
 
         private void RestoreCheckpointBefore(int targetFrame)
@@ -255,12 +273,26 @@ namespace IGTAPReplay
         public void InjectCurrentFrame()
         {
             if (!playing || player == null || virtualKeyboard == null) return;
-            if (!seeking && (finished || paused)) return;
+            if (!seeking && (finished || paused))
+            {
+                Plugin.DbgLog($"InjectCurrentFrame SKIPPED fc={frameCounter} seeking={seeking} finished={finished} paused={paused} timeScale={Time.timeScale}");
+                return;
+            }
+            // Skip frames with deltaTime=0 (happens when timeScale switches mid-visual-frame).
+            // Movement would run but all deltaTime-based calculations produce zero.
+            if (Time.deltaTime == 0f)
+            {
+                Plugin.DbgLog($"InjectCurrentFrame SKIPPED fc={frameCounter} dt=0 (resume frame)");
+                return;
+            }
 
             frameCounter++;
             AdvanceSpanIndex();
             InjectForFrame(frameCounter);
             InputSystem.Update();
+            var moveAct = (UnityEngine.InputSystem.InputAction)ReplayState.F_moveAction.GetValue(player);
+            var moveVal = moveAct.ReadValue<Vector2>();
+            Plugin.DbgLog($"InjectCurrentFrame fc={frameCounter} seeking={seeking} seekTarget={seekTarget} paused={paused} timeScale={Time.timeScale} dt={Time.deltaTime:F4} moveVal=({moveVal.x:F1},{moveVal.y:F1})");
 
 
             // Validate checkpoints HERE (in the prefix, before Movement runs) —
@@ -280,16 +312,32 @@ namespace IGTAPReplay
         public void PostMovementUpdate()
         {
             if (!playing || player == null) return;
-            if (!seeking && (finished || paused)) return;
+            if (!seeking && (finished || paused))
+            {
+                Plugin.DbgLog($"PostMovementUpdate SKIPPED fc={frameCounter} seeking={seeking} finished={finished} paused={paused}");
+                return;
+            }
 
-            // Input was already injected in the previous LateUpdate.
-            // Now we just do bookkeeping for this frame.
-
-            // Reached seek target — pause
+            // Reached seek target — pause immediately (including timeScale)
             if (seeking && frameCounter >= seekTarget)
             {
                 seeking = false;
                 paused = true;
+                Time.timeScale = 0f;
+                Plugin.DbgLog($"PostMovementUpdate SEEK DONE fc={frameCounter} target={seekTarget}");
+                return;
+            }
+
+            // Step target reached — pause and sync visual position
+            if (PauseOnFrame > 0 && frameCounter >= PauseOnFrame)
+            {
+                PauseOnFrame = 0;
+                paused = true;
+                Time.timeScale = 0f;
+                // Force transform to match rigidbody so the visual position updates
+                var body = (Rigidbody2D)ReplayState.F_body.GetValue(player);
+                player.transform.position = new Vector3(body.position.x, body.position.y, player.transform.position.z);
+                Plugin.DbgLog($"PostMovementUpdate STEP DONE fc={frameCounter} pos={body.position}");
                 return;
             }
 

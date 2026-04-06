@@ -71,6 +71,9 @@ namespace IGTAPReplay
         private bool timelineStylesInit;
         private readonly Dictionary<string, Color> comboColorCache = new Dictionary<string, Color>();
 
+        // Stepping
+        private int pendingStepTarget;
+
         // Scrubbing
         private bool isScrubbing;
 
@@ -128,14 +131,31 @@ namespace IGTAPReplay
         {
             if (player == null || editorMode == EditorMode.None) return;
 
-            // Sync pause state from playback (seeking finished → playback set paused=true)
             if (editorMode == EditorMode.Replay)
             {
                 var playback = FindAnyObjectByType<ReplayPlayback>();
-                if (playback != null && playback.IsPaused && !paused)
+                if (playback != null)
                 {
-                    paused = true;
-                    Time.timeScale = 0f;
+                    if (pendingStepTarget > 0)
+                    {
+                        Time.timeScale = savedTimeScale > 0 ? savedTimeScale : 1f;
+                        playback.PauseOnFrame = pendingStepTarget;
+                        playback.IsPaused = false;
+                        paused = false;
+                        Plugin.DbgLog($"Editor.Update step GO target={pendingStepTarget}");
+                        pendingStepTarget = 0;
+                    }
+                    // Don't sync pause while a step is in flight
+                    else if (playback.PauseOnFrame > 0)
+                    {
+                    }
+                    // Sync pause state from playback (seeking/step finished)
+                    else if (playback.IsPaused && !playback.IsSeeking && !paused)
+                    {
+                        paused = true;
+                        Time.timeScale = 0f;
+                        Plugin.DbgLog("Editor.Update synced pause from playback");
+                    }
                 }
             }
 
@@ -164,29 +184,36 @@ namespace IGTAPReplay
         private void Pause()
         {
             if (paused) return;
-            paused = true;
-            savedTimeScale = Time.timeScale;
-            Time.timeScale = 0f;
 
             var playback = FindAnyObjectByType<ReplayPlayback>();
-            if (playback != null) playback.IsPaused = true;
+            if (playback != null)
+            {
+                // Don't freeze anything now — just tell playback to stop after next frame.
+                // PostMovementUpdate will set paused=true and timeScale=0 cleanly.
+                playback.PauseOnFrame = playback.FrameCount + 1;
+                Plugin.DbgLog($"Editor.Pause: PauseOnFrame={playback.PauseOnFrame}");
+            }
 
-            Plugin.Instance.ShowToast("Paused (Backspace to resume)");
+            // Mark editor as paused immediately so buttons show correct state
+            paused = true;
+            savedTimeScale = Time.timeScale;
+            Plugin.Instance.ShowToast("Paused");
         }
 
         private void Resume()
         {
             if (!paused) return;
             paused = false;
-            Time.timeScale = savedTimeScale;
+            Time.timeScale = savedTimeScale > 0 ? savedTimeScale : 1f;
 
             var playback = FindAnyObjectByType<ReplayPlayback>();
             if (playback != null)
             {
                 playback.IsPaused = false;
-                // If replay was finished, unfinish so it can continue/re-seek
+                playback.PauseOnFrame = 0; // clear any pending pause
             }
 
+            Plugin.DbgLog($"Editor.Resume timeScale={Time.timeScale}");
             Plugin.Instance.ShowToast("Resumed");
         }
 
@@ -819,18 +846,19 @@ namespace IGTAPReplay
 
             // |<< back 1 second
             if (GUI.Button(new Rect(x, barY, btnW, btnH), "|<<"))
-                StepFrames(-timestep);
+            { Plugin.DbgLog("BTN: |<< (back 1s)"); StepFrames(-timestep); }
             x += btnW + gap;
 
             // |< back 1 frame
             if (GUI.Button(new Rect(x, barY, btnW, btnH), "|<"))
-                StepFrames(-1);
+            { Plugin.DbgLog("BTN: |< (back 1 frame)"); StepFrames(-1); }
             x += btnW + gap;
 
             // Play / Pause
             string playLabel = paused ? "\u25B6" : "\u2016"; // ▶ or ‖
             if (GUI.Button(new Rect(x, barY, btnW, btnH), playLabel))
             {
+                Plugin.DbgLog($"BTN: play/pause (paused={paused})");
                 if (paused) Resume();
                 else Pause();
             }
@@ -838,12 +866,12 @@ namespace IGTAPReplay
 
             // >| forward 1 frame
             if (GUI.Button(new Rect(x, barY, btnW, btnH), ">|"))
-                StepFrames(1);
+            { Plugin.DbgLog("BTN: >| (fwd 1 frame)"); StepFrames(1); }
             x += btnW + gap;
 
             // >>| forward 1 second
             if (GUI.Button(new Rect(x, barY, btnW, btnH), ">>|"))
-                StepFrames(timestep);
+            { Plugin.DbgLog("BTN: >>| (fwd 1s)"); StepFrames(timestep); }
             x += btnW + gap * 3;
 
             // Speed selector
@@ -862,6 +890,7 @@ namespace IGTAPReplay
                 string label = spd >= 1f ? $"{spd:0}x" : $"{spd:0.##}x";
                 if (GUI.Button(new Rect(x, barY, speedBtnW, btnH), label, speedStyle))
                 {
+                    Plugin.DbgLog($"BTN: speed {spd}x");
                     savedTimeScale = spd;
                     if (!paused) Time.timeScale = spd;
                 }
@@ -886,7 +915,7 @@ namespace IGTAPReplay
             var prevExitBg = GUI.backgroundColor;
             GUI.backgroundColor = new Color(0.8f, 0.2f, 0.2f);
             if (GUI.Button(new Rect(x, barY, exitBtnW, btnH), "Exit"))
-                Plugin.Instance.RequestStop();
+            { Plugin.DbgLog("BTN: Exit"); Plugin.Instance.RequestStop(); }
             GUI.backgroundColor = prevExitBg;
         }
 
@@ -900,14 +929,16 @@ namespace IGTAPReplay
                 if (playback == null) return;
 
                 int target = Mathf.Max(1, playback.FrameCount + frames);
+                Plugin.DbgLog($"StepFrames({frames}) current={playback.FrameCount} target={target}");
 
-                // SeekToFrame restores a checkpoint if going backward,
-                // then runs the game forward to the target via Update().
-                // It auto-pauses when the target is reached.
-                // We need timeScale > 0 so the game actually simulates.
-                paused = false;
-                Time.timeScale = savedTimeScale;
-                playback.SeekToFrame(target);
+                if (frames < 0)
+                {
+                    playback.SeekToFrame(target);
+                    return;
+                }
+
+                // Set pending — editor's Update on the next frame will execute the step
+                pendingStepTarget = target;
                 // playback.Update() will run each frame and set paused=true when done.
                 // We sync our paused state from playback in Update().
             }
