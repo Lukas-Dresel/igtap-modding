@@ -141,18 +141,14 @@ namespace IGTAPReplay
                 {
                     if (pendingStepTarget > 0)
                     {
-                        // Don't unpause here. Request it so the Movement prefix
-                        // executes the unpause at the correct lifecycle point.
                         playback.RequestUnpause(pendingStepTarget);
                         paused = false;
                         Plugin.DbgLog($"Editor.Update step REQUESTED target={pendingStepTarget}");
                         pendingStepTarget = 0;
                     }
-                    // Don't sync pause while a step is in flight
                     else if (playback.PauseOnFrame > 0)
                     {
                     }
-                    // Sync pause state from playback (seeking/step finished)
                     else if (playback.IsPaused && !playback.IsSeeking && !paused)
                     {
                         paused = true;
@@ -162,17 +158,26 @@ namespace IGTAPReplay
                 }
             }
 
-            // Use old Input system for editor hotkeys (real InputSystem devices are
-            // disabled during playback, but UnityEngine.Input still works)
-            if (Input.GetKeyDown(KeyCode.Backspace))
+            // Editor hotkeys (Backspace=pause, arrows=step).
+            // Uses old Input API because during replay, real InputSystem devices are
+            // disabled. Wrapped in try-catch because the game may have old Input disabled
+            // entirely (Input System package only in Player Settings).
+            try
             {
-                Plugin.DbgLog($"Backspace pressed, paused={paused}");
-                if (paused) Resume();
-                else Pause();
-            }
+                if (Input.GetKeyDown(KeyCode.Backspace))
+                {
+                    Plugin.DbgLog($"Backspace pressed, paused={paused}");
+                    if (paused) Resume();
+                    else Pause();
+                }
 
-            if (paused)
-                HandleStepping();
+                if (paused)
+                    HandleStepping();
+            }
+            catch (System.InvalidOperationException)
+            {
+                // Old Input Manager is disabled — hotkeys won't work, but don't block cleanup
+            }
 
             // Live marker cleanup (recording)
             if (editorMode == EditorMode.Recording)
