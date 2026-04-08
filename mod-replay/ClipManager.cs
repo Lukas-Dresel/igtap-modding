@@ -36,21 +36,24 @@ namespace IGTAPReplay
             if (!buffer.IsRunning) return;
             if (!Plugin.AutoRecordCourses.Value) return;
 
-            // Deduplicate: if there's already an active clip for this course, ignore
+            // Deduplicate: if there's already any clip for this course (active or pending save), ignore
             for (int i = 0; i < pendingCourseClips.Count; i++)
             {
-                if (pendingCourseClips[i].CourseNumber == course.courseNumber && pendingCourseClips[i].EndFrame < 0)
+                if (pendingCourseClips[i].CourseNumber == course.courseNumber)
                 {
-                    Plugin.DbgLog($"Course {course.courseNumber} startTracking ignored — clip already active");
+                    Plugin.DbgLog($"Course {course.courseNumber} startTracking ignored — clip already exists");
                     return;
                 }
             }
 
-            int prePaddingFrames = Plugin.CoursePrePaddingSeconds.Value * buffer.Timestep;
-            int startFrame = Mathf.Max(buffer.HeadFrame - prePaddingFrames, buffer.TailFrame);
-
             // Force a snapshot at the course start boundary
             buffer.CaptureSnapshot(buffer.TrackedPlayer);
+
+            // Extend the recording start back to the nearest checkpoint before
+            // the pre-padding point, so the clip always begins at an exact snapshot.
+            int prePaddingFrames = Plugin.CoursePrePaddingSeconds.Value * buffer.Timestep;
+            int desiredStart = Mathf.Max(buffer.HeadFrame - prePaddingFrames, buffer.TailFrame);
+            int startFrame = buffer.FindCheckpointAtOrBefore(desiredStart);
             buffer.Pin(startFrame);
 
             var clip = new PendingCourseClip

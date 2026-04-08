@@ -68,6 +68,10 @@ In-game minimap/map overlay with real-time tilemap rendering. Features:
 - Configurable position (screen corner), size, and opacity
 - Toggle with F6, cycle view modes with F5, settings in debug menu (F8)
 
+### Checkpoint (`mod-checkpoint/`)
+
+Custom checkpoint system with multiple slots. Save your position (F4), teleport back (F3), cycle slots (F2). Overrides death respawn to use custom checkpoints. Persists to JSON. Manageable from the F8 debug menu.
+
 ### Fixed Timestep (`mod-fixedtimestep/`)
 
 Locks `Time.captureFramerate = 50`, forcing `Time.deltaTime = 0.02` every frame regardless of actual framerate. Required for deterministic replay — all physics calculations in `Movement.Update()` use `deltaTime`, so locking it makes the simulation frame-rate independent.

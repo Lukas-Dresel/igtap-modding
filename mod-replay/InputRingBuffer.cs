@@ -279,6 +279,20 @@ namespace IGTAPReplay
             CaptureCheckpoint(player);
         }
 
+        /// <summary>
+        /// Returns the frame of the nearest checkpoint at or before the given frame.
+        /// Falls back to the given frame itself if no checkpoint exists before it.
+        /// </summary>
+        public int FindCheckpointAtOrBefore(int frame)
+        {
+            for (int i = checkpoints.Count - 1; i >= 0; i--)
+            {
+                if (checkpoints[i].Frame <= frame)
+                    return checkpoints[i].Frame;
+            }
+            return frame;
+        }
+
         // --- Pinning ---
 
         public void Pin(int frame)
@@ -332,26 +346,31 @@ namespace IGTAPReplay
                 }},
             };
 
-            // Find the best checkpoint at or before startFrame for InitialState
+            // Find the best checkpoint at or before startFrame for InitialState.
+            // Reach back to the nearest prior checkpoint so the replay starts
+            // from an exact state and plays forward through any pre-padding.
             ReplayCheckpoint? bestCp = null;
             for (int i = checkpoints.Count - 1; i >= 0; i--)
             {
                 if (checkpoints[i].Frame <= startFrame)
                 {
                     bestCp = checkpoints[i];
-                    // If the best checkpoint is before startFrame, adjust startFrame back
-                    // so the replay state is exact
-                    if (checkpoints[i].Frame < startFrame)
-                        startFrame = checkpoints[i].Frame;
+                    startFrame = checkpoints[i].Frame;
                     break;
                 }
+            }
+
+            if (!bestCp.HasValue && checkpoints.Count > 0)
+            {
+                // No checkpoint before startFrame — use the earliest available
+                bestCp = checkpoints[0];
+                startFrame = checkpoints[0].Frame;
             }
 
             if (bestCp.HasValue)
                 file.InitialState = bestCp.Value.State;
             else if (checkpoints.Count > 0)
             {
-                // Fallback: use earliest checkpoint
                 file.InitialState = checkpoints[0].State;
                 startFrame = checkpoints[0].Frame;
             }
