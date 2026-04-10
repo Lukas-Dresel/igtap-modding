@@ -52,9 +52,10 @@ class SimConfig:
 
 def load_config(
     data_path: str = "data/level1_data.json",
+    profile: str | None = None,
     success_times_path: str | None = None,
     failure_times_path: str | None = None,
-    clone_course_duration: float = 2.1,
+    clone_course_duration: float | None = None,
 ) -> SimConfig:
     base = Path(__file__).parent
 
@@ -73,8 +74,25 @@ def load_config(
             cap=u["cap"],
         )
 
-    success_times = _load_times(base / success_times_path) if success_times_path else [8.0] * 50
-    failure_times = _load_times(base / failure_times_path) if failure_times_path else [4.0] * 10
+    # Load from profile if specified
+    if profile:
+        profile_dir = base / "profiles" / profile
+        profile_json = profile_dir / "profile.json"
+        with open(profile_json) as f:
+            pdata = json.load(f)
+
+        st_path = profile_dir / "success_times.csv"
+        ft_path = profile_dir / "failure_times.csv"
+        success_times = _load_times(st_path) if st_path.exists() else []
+        failure_times = _load_times(ft_path) if ft_path.exists() else []
+
+        if clone_course_duration is None:
+            clone_course_duration = pdata.get("clone_course_duration", 2.1)
+    else:
+        success_times = _load_times(base / success_times_path) if success_times_path else [8.0] * 50
+        failure_times = _load_times(base / failure_times_path) if failure_times_path else [4.0] * 10
+        if clone_course_duration is None:
+            clone_course_duration = 2.1
 
     return SimConfig(
         base_reward=data["course"]["base_reward"],

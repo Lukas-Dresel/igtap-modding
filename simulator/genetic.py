@@ -112,7 +112,8 @@ class GeneticSearch:
         contestants = self.rng.sample(pop, min(k, len(pop)))
         return min(contestants, key=lambda x: x[0])[1]
 
-    def search(self, generations: int = 500, verbose: bool = True) -> list[str]:
+    def search(self, generations: int = 500, verbose: bool = True,
+                on_improvement: callable = None) -> list[str]:
         # Initialize population
         pop = []
         for _ in range(self.pop_size):
@@ -123,6 +124,8 @@ class GeneticSearch:
 
         best_time = pop[0][0]
         best_genome = pop[0][1]
+        if on_improvement:
+            on_improvement(best_genome, best_time)
 
         for gen in range(generations):
             # Elitism: keep top individuals
@@ -143,6 +146,8 @@ class GeneticSearch:
             if pop[0][0] < best_time:
                 best_time = pop[0][0]
                 best_genome = pop[0][1]
+                if on_improvement:
+                    on_improvement(best_genome, best_time)
                 if verbose:
                     parts = []
                     for k, g in groupby(best_genome):

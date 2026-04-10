@@ -9,7 +9,7 @@ from state import GameState
 from policy import (
     SaveForWallJump, CheapestFirst, ClonesFirst, CashFirst, GreedyROI, RandomPolicy,
     PreTomjon6, Tomjon6, Lukas, MCTSDistilledV1, MCTSDistilledV2, MCTSDistilledV3, MCTSDistilledV4, MCTSDistilledV5, MCTSDistilledV6, MCTSDistilledV7, MCTSDistilledV8,
-    Z3OptimalV1,
+    Z3OptimalV1, SimSearchV1,
     FixedSequence, CashThenClones,
 )
 
@@ -39,20 +39,17 @@ ALL_POLICIES = {
     "v7": lambda: MCTSDistilledV7(),
     "v8": lambda: MCTSDistilledV8(),
     "z3v1": lambda: Z3OptimalV1(),
+    "ss1": lambda: SimSearchV1(),
     "ct1_5": lambda: CashThenClones(cash_first=1, clone_target=5),
     "ct3_5": lambda: CashThenClones(cash_first=3, clone_target=5),
 }
 
 # Top 5 from previous runs
-TOP5 = ["z3v1", "v8", "v7", "v6", "v5"]
+TOP5 = ["ss1", "z3v1", "v8", "v7", "v6"]
 
 
-def compare_policies(n_sims: int = 1000, seed: int = 42, mcts_iters: int = 0, only: str = None):
-    config = load_config(
-        success_times_path="data/success_times.csv",
-        failure_times_path="data/failure_times.csv",
-        clone_course_duration=2.10,
-    )
+def compare_policies(n_sims: int = 1000, seed: int = 42, mcts_iters: int = 0, only: str = None, profile: str = "mysko"):
+    config = load_config(profile=profile)
     sim = Simulator(config, seed=seed)
 
     if only == "all":
@@ -203,7 +200,11 @@ def distill_mcts(config, iterations=500, n_runs=10, seed=42):
 
 
 if __name__ == "__main__":
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 500
-    mcts = int(sys.argv[2]) if len(sys.argv) > 2 else 0
-    only = sys.argv[3] if len(sys.argv) > 3 else None
-    compare_policies(n_sims=n, mcts_iters=mcts, only=only)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("n_sims", type=int, nargs="?", default=500)
+    parser.add_argument("mcts_iters", type=int, nargs="?", default=0)
+    parser.add_argument("only", nargs="?", default=None)
+    parser.add_argument("--profile", "-p", default="mysko")
+    args = parser.parse_args()
+    compare_policies(n_sims=args.n_sims, mcts_iters=args.mcts_iters, only=args.only, profile=args.profile)

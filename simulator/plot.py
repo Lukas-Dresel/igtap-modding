@@ -71,12 +71,11 @@ def trace_run(config: SimConfig, policy, seed: int = 42) -> tuple[list[float], l
 
 
 def main():
-    config = load_config(
-        success_times_path="data/success_times.csv",
-        failure_times_path="data/failure_times.csv",
-        clone_course_duration=2.10,
-        buy_time=3.0,
-    )
+    import argparse as _ap
+    _p = _ap.ArgumentParser()
+    _p.add_argument("--profile", "-p", default="mysko")
+    _args, _ = _p.parse_known_args()
+    config = load_config(profile=_args.profile)
 
     policies = [
         ("MCTSDistilled", MCTSDistilled()),

@@ -437,6 +437,37 @@ class Z3OptimalV1(Policy):
         return Action.run()
 
 
+class SimSearchV1(Policy):
+    """Sim-validated block search (nc=10,nk=10): 2c,4cl,8c,6cl + wallJump. 163.7s.
+
+    Found via z3_optimizer.py: first used Z3/brute-force over all C(20,10)=184756
+    orderings of 10 cashPerLoop + 10 cloneCount to find the optimal interleaving
+    under an expected-value continuous income model (eval_sequence). That found
+    2C 2K 1C 1K 3C 1K 4C 6K (Z3OptimalV1), which was slightly suboptimal in the
+    stochastic simulator due to model approximation (ignoring batched box buys,
+    discrete run cycles). Then searched ~417 block-pattern candidates (XC YK ZC WK
+    with varying block sizes) evaluated directly in the stochastic simulator
+    (200 sims each, validated top-4 at 5000 sims). This 2C 4K 8C 6K pattern won.
+    """
+
+    SEQUENCE = (
+        ["cashPerLoop"] * 2 +
+        ["cloneCount"] * 4 +
+        ["cashPerLoop"] * 8 +
+        ["cloneCount"] * 6 +
+        ["wallJump"]
+    )
+
+    def choose_action(self, state: GameState) -> Action:
+        total_bought = sum(state.upgrades.values())
+        if total_bought >= len(self.SEQUENCE):
+            return Action.run()
+        target = self.SEQUENCE[total_bought]
+        if state.can_afford(target):
+            return Action.buy(target)
+        return Action.run()
+
+
 class FixedSequence(Policy):
     """Follow a fixed sequence of upgrade purchases. Run course when can't afford next.
     Tracks position by counting total upgrades bought, so it's stateless per sim."""

@@ -33,11 +33,11 @@ def main():
         with open(src) as f:
             data = json.load(f)
 
-    config = load_config(
-        success_times_path="data/success_times.csv",
-        failure_times_path="data/failure_times.csv",
-        clone_course_duration=2.10,
-    )
+    import argparse as _ap
+    _p = _ap.ArgumentParser()
+    _p.add_argument("--profile", "-p", default="mysko")
+    _args, _ = _p.parse_known_args()
+    config = load_config(profile=_args.profile)
     sim = Simulator(config, seed=42)
 
     print(f"Evaluating {len(data)} sequences @ {n_sims} sims each\n")

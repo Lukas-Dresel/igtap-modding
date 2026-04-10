@@ -15,7 +15,8 @@ from itertools import groupby
 from config import SimConfig
 from simulator import Simulator
 from policy import FixedSequence
-from lexicase import simulate_with_metrics, FEATURE_NAMES
+from metrics import simulate_with_metrics
+from lexicase import FEATURE_NAMES
 
 
 class NoveltyGA:
@@ -40,7 +41,7 @@ class NoveltyGA:
         """Compute behavior vector: average feature values across eval seeds."""
         all_features = []
         for s in self.eval_seeds:
-            features = simulate_with_metrics(self.config, genome, random.Random(s))
+            features = simulate_with_metrics(self.config, genome, s)
             all_features.append(features)
 
         # Average each feature across seeds
@@ -55,7 +56,7 @@ class NoveltyGA:
         """Mean wallJump time across seeds (lower is better)."""
         total = 0.0
         for s in self.eval_seeds:
-            features = simulate_with_metrics(self.config, genome, random.Random(s))
+            features = simulate_with_metrics(self.config, genome, s)
             total += features["time_to_walljump"]
         return total / self.n_eval_seeds
 
@@ -158,7 +159,8 @@ class NoveltyGA:
         contestants = self.rng.sample(scored_pop, min(k, len(scored_pop)))
         return min(contestants, key=lambda x: x[0])[2]  # (score, bv, genome)
 
-    def search(self, generations: int = 1000, verbose: bool = True) -> list[str]:
+    def search(self, generations: int = 1000, verbose: bool = True,
+                on_improvement: callable = None) -> list[str]:
         # Initialize population: (fitness, behavior, genome)
         pop = []
         for _ in range(self.pop_size):
@@ -193,6 +195,8 @@ class NoveltyGA:
                 if f < best_fitness:
                     best_fitness = f
                     best_genome = g
+                    if on_improvement:
+                        on_improvement(best_genome, best_fitness)
                     if verbose:
                         parts = []
                         for k, gg in groupby(g):

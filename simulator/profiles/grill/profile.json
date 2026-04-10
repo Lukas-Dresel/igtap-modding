@@ -1,0 +1,5 @@
+{
+  "name": "grill",
+  "clone_course_duration": 2.10,
+  "notes": "50% success rate, 2.3s success time, 1.0s failure time."
+}

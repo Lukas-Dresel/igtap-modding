@@ -320,11 +320,11 @@ def simulate_policy(seq_names, n_sims=2000, seed=42):
     from policy import FixedSequence
     import statistics
 
-    config = load_config(
-        success_times_path="data/success_times.csv",
-        failure_times_path="data/failure_times.csv",
-        clone_course_duration=CLONE_DURATION,
-    )
+    import argparse as _ap
+    _p = _ap.ArgumentParser()
+    _p.add_argument("--profile", "-p", default="mysko")
+    _args, _ = _p.parse_known_args()
+    config = load_config(profile=_args.profile)
     full_seq = list(seq_names) + ["wallJump"]
     policy = FixedSequence(full_seq)
     sim = Simulator(config, seed=seed)

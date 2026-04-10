@@ -25,9 +25,10 @@ from state import GameState
 from fsm import State, transition_time
 from simulator import _clone_income_between
 from policy import FixedSequence
+from metrics import simulate_with_metrics
 
 
-def simulate_with_metrics(config: SimConfig, genome: list[str], rng: random.Random) -> dict[str, float]:
+def _old_simulate_with_metrics(config: SimConfig, genome: list[str], rng: random.Random) -> dict[str, float]:
     """Run one simulation tracking all milestone metrics."""
     seq = genome + ["wallJump"]
     state = GameState(config=config)
@@ -196,7 +197,7 @@ class LexicaseGA:
         global FEATURE_NAMES
         all_values = []
         for s in self.eval_seeds:
-            features = simulate_with_metrics(self.config, genome, random.Random(s))
+            features = simulate_with_metrics(self.config, genome, s)
             if FEATURE_NAMES is None:
                 FEATURE_NAMES = list(features.keys())
             all_values.extend(features[k] for k in FEATURE_NAMES)
@@ -269,7 +270,8 @@ class LexicaseGA:
                 clone += 1
         return result
 
-    def search(self, generations: int = 1000, verbose: bool = True) -> list[str]:
+    def search(self, generations: int = 1000, verbose: bool = True,
+                on_improvement: callable = None) -> list[str]:
         pop = []
         for _ in range(self.pop_size):
             g = self.random_genome()
@@ -280,14 +282,14 @@ class LexicaseGA:
         best_genome = None
 
         for gen in range(generations):
-            # Track best by mean wallJump time across seeds
             for scores, genome in pop:
-                # wallJump time is feature index 0 in each seed block
                 wj_times = [scores[i * len(FEATURE_NAMES)] for i in range(self.n_cases)]
                 mean_wj = sum(wj_times) / len(wj_times)
                 if mean_wj < best_mean_wj:
                     best_mean_wj = mean_wj
                     best_genome = genome
+                    if on_improvement:
+                        on_improvement(best_genome, best_mean_wj)
                     if verbose:
                         parts = []
                         for k, g in groupby(genome):
