@@ -60,6 +60,32 @@ namespace IGTAPReplay
     }
 
     /// <summary>
+    /// A game event marker embedded in the replay (speedrun splits, course events, etc.).
+    /// Serialized as JSON in the file; frame/wallclock/type are also in the line prefix for easy filtering.
+    /// </summary>
+    [Serializable]
+    public struct EventMarker
+    {
+        public int Frame;
+        public float WallclockTime;
+        public string Type;            // "course_start", "course_end", "upgrade", "checkpoint",
+                                       // "death", "respawn", "split", "speedrun_start", "speedrun_finish"
+        // Type-specific fields (unused fields left at default):
+        public int CourseNumber;
+        public bool Completed;
+        public float CourseTime;
+        public string UpgradeId;
+        public string Label;
+        public string Category;
+        public float SplitTime;
+        public float SegmentTime;
+        public float X;
+        public float Y;
+        public string Profile;
+        public bool IsCleanStart;  // for game_start
+    }
+
+    /// <summary>
     /// Complete replay file data model.
     /// </summary>
     public class ReplayFile
@@ -72,6 +98,11 @@ namespace IGTAPReplay
         public List<InputSpan> Spans = new List<InputSpan>();
         public List<VerifyPoint> VerifyPoints = new List<VerifyPoint>();
         public List<ReplayCheckpoint> Checkpoints = new List<ReplayCheckpoint>();
+        public List<EventMarker> Events = new List<EventMarker>();
+
+        // Speedrun metadata (set when recording is a speedrun capture)
+        public string SpeedrunProfile;
+        public string SpeedrunSplits;
     }
 
     /// <summary>
@@ -99,11 +130,18 @@ namespace IGTAPReplay
                     sb.AppendLine($"# Bindings@{binding.Frame}: {string.Join(" ", parts)}");
             }
 
+            // Speedrun metadata
+            if (!string.IsNullOrEmpty(file.SpeedrunProfile))
+                sb.AppendLine($"# Speedrun-Profile: {file.SpeedrunProfile}");
+            if (!string.IsNullOrEmpty(file.SpeedrunSplits))
+                sb.AppendLine($"# Speedrun-Splits: {file.SpeedrunSplits}");
+
             sb.AppendLine();
 
-            // Interleave spans, verify points, and checkpoints in frame order
+            // Interleave spans, verify points, checkpoints, and events in frame order
             int vi = 0;
             int ci = 0;
+            int ei = 0;
             foreach (var span in file.Spans)
             {
                 // Write any verify points before this span
@@ -123,6 +161,13 @@ namespace IGTAPReplay
                     ci++;
                 }
 
+                // Write any event markers before this span
+                while (ei < file.Events.Count && file.Events[ei].Frame <= span.Frame)
+                {
+                    WriteEventMarker(sb, file.Events[ei]);
+                    ei++;
+                }
+
                 string keys = span.Keys.Count > 0
                     ? string.Join(" ", span.Keys.Select(k => KeyNames.ToShortName(k)).OrderBy(k => k))
                     : ".";
@@ -133,7 +178,7 @@ namespace IGTAPReplay
                 sb.AppendLine($"{span.Frame,-8} {keys}{mousePart}{axisPart}");
             }
 
-            // Write remaining verify points and checkpoints
+            // Write remaining verify points, checkpoints, and events
             while (vi < file.VerifyPoints.Count)
             {
                 var vp = file.VerifyPoints[vi];
@@ -147,8 +192,20 @@ namespace IGTAPReplay
                 sb.AppendLine($"# !CP {cp.Frame} {cp.SpanIndex} {json}");
                 ci++;
             }
+            while (ei < file.Events.Count)
+            {
+                WriteEventMarker(sb, file.Events[ei]);
+                ei++;
+            }
 
             File.WriteAllText(path, sb.ToString());
+        }
+
+        private static void WriteEventMarker(StringBuilder sb, EventMarker evt)
+        {
+            // Format: # !EVT <frame> <wallclock> <type> <json>
+            string json = JsonUtility.ToJson(evt);
+            sb.AppendLine($"# !EVT {evt.Frame} {evt.WallclockTime.ToString("F2", CultureInfo.InvariantCulture)} {evt.Type} {json}");
         }
 
         public static ReplayFile Read(string path)
@@ -259,6 +316,18 @@ namespace IGTAPReplay
                     State = state,
                 });
             }
+            else if (content.StartsWith("!EVT "))
+            {
+                ParseEventMarker(file, content);
+            }
+            else if (content.StartsWith("Speedrun-Profile: "))
+            {
+                file.SpeedrunProfile = content.Substring("Speedrun-Profile: ".Length);
+            }
+            else if (content.StartsWith("Speedrun-Splits: "))
+            {
+                file.SpeedrunSplits = content.Substring("Speedrun-Splits: ".Length);
+            }
             else if (content.StartsWith("@"))
             {
                 ParseVerifyPoint(file, content);
@@ -322,6 +391,31 @@ namespace IGTAPReplay
             }
 
             file.VerifyPoints.Add(new VerifyPoint { Frame = frame, Position = pos, Velocity = vel });
+        }
+
+        private static void ParseEventMarker(ReplayFile file, string content)
+        {
+            // "!EVT <frame> <wallclock> <type> <json>"
+            var rest = content.Substring(5); // skip "!EVT "
+            // Split into: frame, wallclock, type, then everything else is JSON
+            int idx1 = rest.IndexOf(' ');
+            if (idx1 < 0) return;
+            int idx2 = rest.IndexOf(' ', idx1 + 1);
+            if (idx2 < 0) return;
+            int idx3 = rest.IndexOf(' ', idx2 + 1);
+            if (idx3 < 0) return;
+
+            if (!int.TryParse(rest.Substring(0, idx1), out int frame)) return;
+            if (!float.TryParse(rest.Substring(idx1 + 1, idx2 - idx1 - 1),
+                NumberStyles.Float, CultureInfo.InvariantCulture, out float wallclock)) return;
+            string type = rest.Substring(idx2 + 1, idx3 - idx2 - 1);
+            string json = rest.Substring(idx3 + 1);
+
+            var marker = JsonUtility.FromJson<EventMarker>(json);
+            marker.Frame = frame;
+            marker.WallclockTime = wallclock;
+            marker.Type = type;
+            file.Events.Add(marker);
         }
 
         private static Vector2 ParseVec2(string s)

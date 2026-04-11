@@ -1,0 +1,4 @@
+name=IGTAP Speedrun Timer
+dll=IGTAPSpeedrun.dll
+description=Automatic speedrun timer with milestone splits and PB tracking
+actions=Build mod-speedrun/SpeedrunTimer.csproj and copy IGTAPSpeedrun.dll into BepInEx/plugins/

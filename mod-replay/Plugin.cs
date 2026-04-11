@@ -14,6 +14,7 @@ namespace IGTAPReplay
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [BepInDependency("com.igtapmod.plugin")]
     [BepInDependency("com.igtapmod.fixedtimestep", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("com.igtapmod.speedrun", BepInDependency.DependencyFlags.SoftDependency)]
     public class Plugin : BaseUnityPlugin
     {
         public const string PluginGUID = "com.igtapmod.replay";
@@ -173,6 +174,13 @@ namespace IGTAPReplay
             HarmonyInstance = new Harmony(PluginGUID);
             HarmonyInstance.PatchAll();
 
+            // Subscribe to centralized game events for course auto-recording
+            GameEvents.CourseStarted += OnGameCourseStarted;
+            GameEvents.CourseStopped += OnGameCourseStopped;
+
+            // Init speedrun bridge (no-op if speedrun mod is absent)
+            SpeedrunBridge.Init();
+
             // Register HUD item
             DebugMenuAPI.RegisterHudItem("Replay", 20, GetHudText);
 
@@ -299,29 +307,35 @@ namespace IGTAPReplay
                 }
             }
 
-            // Course categories: one per course{N} subdirectory
+            // Subdirectory categories: one tab per subdirectory (course1, course2, speedrun, etc.)
             if (Directory.Exists(dir))
             {
-                var courseDirs = Directory.GetDirectories(dir, "course*")
+                var subDirs = Directory.GetDirectories(dir)
                     .OrderBy(d => {
                         string name = Path.GetFileName(d);
-                        int.TryParse(name.Replace("course", ""), out int n);
-                        return n;
+                        // Sort course directories numerically first, others alphabetically after
+                        if (name.StartsWith("course") && int.TryParse(name.Substring(6), out int n))
+                            return $"0_{n:D4}";
+                        return $"1_{name}";
                     })
                     .ToArray();
 
-                foreach (var courseDir in courseDirs)
+                foreach (var subDir in subDirs)
                 {
-                    var courseFiles = Directory.GetFiles(courseDir, "*.txt")
+                    var subFiles = Directory.GetFiles(subDir, "*.txt")
                         .OrderByDescending(f => File.GetLastWriteTime(f))
                         .ToArray();
-                    if (courseFiles.Length > 0)
+                    if (subFiles.Length > 0)
                     {
-                        string dirName = Path.GetFileName(courseDir);
-                        // "course1" -> "Course 1"
-                        string label = "Course " + dirName.Replace("course", "");
-                        browseCategories.Add(new BrowseCategory { Name = label, Files = courseFiles });
-                        allFiles.AddRange(courseFiles);
+                        string dirName = Path.GetFileName(subDir);
+                        // "course1" -> "Course 1", "speedrun" -> "Speedrun"
+                        string label;
+                        if (dirName.StartsWith("course") && int.TryParse(dirName.Substring(6), out _))
+                            label = "Course " + dirName.Substring(6);
+                        else
+                            label = char.ToUpper(dirName[0]) + dirName.Substring(1);
+                        browseCategories.Add(new BrowseCategory { Name = label, Files = subFiles });
+                        allFiles.AddRange(subFiles);
                     }
                 }
             }
@@ -602,8 +616,35 @@ namespace IGTAPReplay
                 ClipMgr.FlushPending();
                 ringBuffer.Stop();
             }
+
+            GameEvents.CourseStarted -= OnGameCourseStarted;
+            GameEvents.CourseStopped -= OnGameCourseStopped;
+            SpeedrunBridge.Destroy();
+
             HarmonyInstance?.UnpatchSelf();
             DebugMenuAPI.UnregisterHudItem("Replay");
+        }
+
+        // --- GameEvents handlers for course auto-recording ---
+
+        private void OnGameCourseStarted(int courseNumber, courseScript course)
+        {
+            ClipMgr?.OnCourseStart(course);
+        }
+
+        private void OnGameCourseStopped(int courseNumber, bool completed, float courseTime)
+        {
+            // ClipManager needs the courseScript instance, but GameEvents only passes courseNumber.
+            // Find the courseScript by number. Use the same pattern as ClipManager uses internally.
+            var courses = Object.FindObjectsByType<courseScript>(FindObjectsSortMode.None);
+            foreach (var course in courses)
+            {
+                if (course.courseNumber == courseNumber)
+                {
+                    ClipMgr?.OnCourseEnd(course, completed);
+                    return;
+                }
+            }
         }
     }
 
@@ -664,29 +705,5 @@ namespace IGTAPReplay
         }
     }
 
-    /// <summary>
-    /// Harmony patch: postfix on courseScript.startTracking — notify ClipManager.
-    /// </summary>
-    [HarmonyPatch(typeof(courseScript), "startTracking")]
-    public static class CourseStartPatch
-    {
-        static void Postfix(courseScript __instance, GameObject newPlayer)
-        {
-            Plugin.DbgLog($"courseScript.startTracking POSTFIX course={__instance.courseNumber}");
-            Plugin.Instance?.ClipMgr?.OnCourseStart(__instance);
-        }
-    }
-
-    /// <summary>
-    /// Harmony patch: postfix on courseScript.stopTracking — notify ClipManager.
-    /// </summary>
-    [HarmonyPatch(typeof(courseScript), "stopTracking")]
-    public static class CourseStopPatch
-    {
-        static void Postfix(courseScript __instance, GameObject newPlayer, bool savePositionData)
-        {
-            Plugin.DbgLog($"courseScript.stopTracking POSTFIX course={__instance.courseNumber} completed={savePositionData}");
-            Plugin.Instance?.ClipMgr?.OnCourseEnd(__instance, savePositionData);
-        }
-    }
+    // Course start/stop patches removed — now handled via GameEvents subscriptions in Plugin.cs
 }

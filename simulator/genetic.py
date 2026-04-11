@@ -1,7 +1,7 @@
 """Genetic algorithm for upgrade sequence optimization.
 
-Genome: a list of upgrade names (cashPerLoop / cloneCount).
-wallJump is implicit at the end.
+Genome: a list of upgrade names (non-terminal buyable upgrades).
+The terminal upgrade is implicit at the end.
 Fitness: negative total time (lower is better).
 
 Operators:
@@ -29,24 +29,27 @@ class GeneticSearch:
         self.elite_count = elite_count
         self.mutation_rate = mutation_rate
         self.eval_sims = eval_sims
-        self.cash_cap = config.upgrades["cashPerLoop"].cap
-        self.clone_cap = config.upgrades["cloneCount"].cap
+        self.upgrade_names = config.buyable_upgrade_names
+        self.upgrade_caps = {name: config.buyable_upgrades[name].cap
+                            for name in self.upgrade_names}
 
     def evaluate(self, genome: list[str]) -> float:
         """Average time over eval_sims runs, each with a different seed."""
         total = 0.0
         for i in range(self.eval_sims):
             sim = Simulator(self.config, seed=self.rng.randint(0, 2**31))
-            policy = FixedSequence(genome + ["wallJump"])
+            policy = FixedSequence(genome + [self.config.terminal_upgrade])
             state = sim.run(policy)
             total += state.time
         return total / self.eval_sims
 
     def random_genome(self) -> list[str]:
         """Generate a random valid genome."""
-        n_cash = self.rng.randint(0, min(20, self.cash_cap))
-        n_clone = self.rng.randint(0, min(15, self.clone_cap))
-        genome = ["cashPerLoop"] * n_cash + ["cloneCount"] * n_clone
+        genome = []
+        for name in self.upgrade_names:
+            cap = self.upgrade_caps[name]
+            n = self.rng.randint(0, min(20, cap))
+            genome.extend([name] * n)
         self.rng.shuffle(genome)
         return genome
 
@@ -67,7 +70,7 @@ class GeneticSearch:
 
         if op == "insert" and len(genome) < 40:
             pos = self.rng.randint(0, len(genome))
-            gene = self.rng.choice(["cashPerLoop", "cloneCount"])
+            gene = self.rng.choice(self.upgrade_names)
             genome.insert(pos, gene)
 
         elif op == "delete" and len(genome) > 1:
@@ -81,7 +84,10 @@ class GeneticSearch:
 
         elif op == "change" and genome:
             pos = self.rng.randint(0, len(genome) - 1)
-            genome[pos] = "cloneCount" if genome[pos] == "cashPerLoop" else "cashPerLoop"
+            # Pick a different upgrade type
+            others = [n for n in self.upgrade_names if n != genome[pos]]
+            if others:
+                genome[pos] = self.rng.choice(others)
 
         elif op == "shuffle_block" and len(genome) > 2:
             # Shuffle a random contiguous block
@@ -96,15 +102,11 @@ class GeneticSearch:
     def _clamp(self, genome: list[str]) -> list[str]:
         """Enforce upgrade caps."""
         result = []
-        cash = 0
-        clone = 0
+        counts = {name: 0 for name in self.upgrade_names}
         for g in genome:
-            if g == "cashPerLoop" and cash < self.cash_cap:
+            if g in counts and counts[g] < self.upgrade_caps[g]:
                 result.append(g)
-                cash += 1
-            elif g == "cloneCount" and clone < self.clone_cap:
-                result.append(g)
-                clone += 1
+                counts[g] += 1
         return result
 
     def tournament_select(self, pop: list[tuple[float, list[str]]], k: int = 3) -> list[str]:

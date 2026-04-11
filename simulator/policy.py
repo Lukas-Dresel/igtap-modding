@@ -26,17 +26,22 @@ class Policy(ABC):
     def choose_action(self, state: GameState) -> Action:
         ...
 
+    def compatible_with(self, config) -> bool:
+        """Return True if this policy can run on the given config (level)."""
+        return True
+
     @property
     def name(self) -> str:
         return self.__class__.__name__
 
 
 class SaveForWallJump(Policy):
-    """Baseline: never buy anything except wall jump."""
+    """Baseline: never buy anything except the terminal upgrade."""
 
     def choose_action(self, state: GameState) -> Action:
-        if state.can_afford("wallJump"):
-            return Action.buy("wallJump")
+        terminal = state.config.terminal_upgrade
+        if state.can_afford(terminal):
+            return Action.buy(terminal)
         return Action.run()
 
 
@@ -52,45 +57,45 @@ class CheapestFirst(Policy):
 
 
 class ClonesFirst(Policy):
-    """Prioritize clone count, then cashPerLoop, then wallJump."""
+    """Prioritize clone upgrade, then income upgrade, then terminal."""
 
     def __init__(self, clone_target: int = 10):
         self.clone_target = clone_target
 
     def choose_action(self, state: GameState) -> Action:
-        # Buy clones first up to target
-        if state.clone_count < self.clone_target and state.can_afford("cloneCount"):
-            return Action.buy("cloneCount")
-        # Then cash multiplier
-        if state.can_afford("cashPerLoop"):
-            return Action.buy("cashPerLoop")
-        # Then wall jump
-        if state.can_afford("wallJump"):
-            return Action.buy("wallJump")
+        cfg = state.config
+        if state.clone_count < self.clone_target and state.can_afford(cfg.clone_upgrade):
+            return Action.buy(cfg.clone_upgrade)
+        if state.can_afford(cfg.income_upgrade):
+            return Action.buy(cfg.income_upgrade)
+        if state.can_afford(cfg.terminal_upgrade):
+            return Action.buy(cfg.terminal_upgrade)
         return Action.run()
 
 
 class CashFirst(Policy):
-    """Prioritize cashPerLoop, then clones, then wallJump."""
+    """Prioritize income upgrade, then clones, then terminal."""
 
     def __init__(self, cash_target: int = 10):
         self.cash_target = cash_target
 
     def choose_action(self, state: GameState) -> Action:
-        if state.cash_per_loop < self.cash_target and state.can_afford("cashPerLoop"):
-            return Action.buy("cashPerLoop")
-        if state.can_afford("cloneCount"):
-            return Action.buy("cloneCount")
-        if state.can_afford("wallJump"):
-            return Action.buy("wallJump")
+        cfg = state.config
+        if state.cash_per_loop < self.cash_target and state.can_afford(cfg.income_upgrade):
+            return Action.buy(cfg.income_upgrade)
+        if state.can_afford(cfg.clone_upgrade):
+            return Action.buy(cfg.clone_upgrade)
+        if state.can_afford(cfg.terminal_upgrade):
+            return Action.buy(cfg.terminal_upgrade)
         return Action.run()
 
 
 class GreedyROI(Policy):
     """Buy the upgrade with the highest marginal income increase per cost.
-    If wallJump ROI beats everything, save for it."""
+    If terminal ROI beats everything, save for it."""
 
     def choose_action(self, state: GameState) -> Action:
+        terminal = state.config.terminal_upgrade
         affordable = state.affordable_upgrades()
         if not affordable:
             return Action.run()
@@ -103,16 +108,10 @@ class GreedyROI(Policy):
             if cost <= 0:
                 continue
 
-            if name == "wallJump":
-                # Terminal — ROI is infinite if we can afford it and it's time
-                # But only buy if we've invested enough
-                # Use a simple heuristic: buy if cash > 2x wallJump cost
-                # (meaning we've been earning well)
+            if name == terminal:
                 continue  # evaluate separately below
 
-            # Calculate marginal income increase
             old_income = _expected_income_per_second(state)
-            # Simulate buying this upgrade
             test_state = state.clone()
             test_state.buy_upgrade(name)
             new_income = _expected_income_per_second(test_state)
@@ -123,19 +122,16 @@ class GreedyROI(Policy):
                 best_roi = roi
                 best_name = name
 
-        # Compare best ROI upgrade vs wallJump
-        if "wallJump" in affordable:
-            wj_cost = state.upgrade_cost("wallJump")
-            # Time to earn wallJump cost at current rate
+        if terminal in affordable:
+            wj_cost = state.upgrade_cost(terminal)
             current_income = _expected_income_per_second(state)
             if current_income > 0:
                 time_to_wj = wj_cost / current_income
-                # If buying best upgrade would pay back faster than just grinding for WJ
                 if best_name and best_roi > 0:
-                    payback_time = 1.0 / best_roi  # rough time for upgrade to pay for itself
+                    payback_time = 1.0 / best_roi
                     if payback_time < time_to_wj * 0.5:
                         return Action.buy(best_name)
-            return Action.buy("wallJump")
+            return Action.buy(terminal)
 
         if best_name:
             return Action.buy(best_name)
@@ -161,88 +157,67 @@ def _expected_income_per_second(state: GameState) -> float:
     return player_ips + clone_ips
 
 
-class PreTomjon6(Policy):
-    """Human-discovered policy: delay clones until 11x cashPerLoop multiplier,
-    then buy 2 clones, then buy greedy from there."""
+class FixedSequence(Policy):
+    """Follow a fixed sequence of upgrade purchases. Run course when can't afford next.
+    Tracks position by counting total upgrades bought, so it's stateless per sim.
 
-    def __init__(self):
-        self._greedy = GreedyROI()
-        self._phase = "cash"  # "cash" -> "clones" -> "greedy"
-        self._clones_bought = 0
+    Subclass and set SEQUENCE to define a named fixed-sequence policy."""
+
+    SEQUENCE: list[str] = []
+
+    def __init__(self, sequence: list[str] | None = None):
+        self._sequence = list(sequence) if sequence is not None else list(self.SEQUENCE)
+
+    def compatible_with(self, config) -> bool:
+        return all(name in config.upgrades for name in self._sequence)
 
     def choose_action(self, state: GameState) -> Action:
-        if self._phase == "cash":
-            # Buy cashPerLoop until we have 10 purchases (= 11x multiplier since base is 1x + 10)
-            if state.cash_per_loop < 10 and state.can_afford("cashPerLoop"):
-                return Action.buy("cashPerLoop")
-            if state.cash_per_loop >= 10:
-                self._phase = "clones"
-                self._clones_bought = 0
-            else:
-                return Action.run()
+        terminal = state.config.terminal_upgrade
+        total_bought = sum(state.upgrades.values())
+        if total_bought >= len(self._sequence):
+            if state.can_afford(terminal):
+                return Action.buy(terminal)
+            return Action.run()
 
-        if self._phase == "clones":
-            # Buy 2 clones
-            if self._clones_bought < 2 and state.can_afford("cloneCount"):
-                self._clones_bought += 1
-                return Action.buy("cloneCount")
-            if self._clones_bought >= 2:
-                self._phase = "greedy"
-            else:
-                return Action.run()
-
-        # Greedy from here
-        return self._greedy.choose_action(state)
+        target = self._sequence[total_bought]
+        if state.can_afford(target):
+            return Action.buy(target)
+        return Action.run()
 
     @property
     def name(self) -> str:
-        return "PreTomjon6"
+        return self.__class__.__name__
 
 
-class Tomjon6(Policy):
-    """Human-discovered policy: cashPerLoop to 8x, buy 1 clone, cashPerLoop to 11x,
-    then buy clones to 10, then greedy."""
+class PreTomjon6(FixedSequence):
+    """Human-discovered policy: 10c (11x mult) then 10cl, walljump.
 
-    def __init__(self):
-        self._greedy = GreedyROI()
+    Original cash-first version. Same 10 cash + 10 clones end state as Tomjon6,
+    but doesn't kick off clone income early — all cash bought before any clones.
+    Tomjon6 refines this by buying the first clone after only 7 cash.
+    """
 
-    def choose_action(self, state: GameState) -> Action:
-        clones = state.clone_count
-        cash_level = state.cash_per_loop  # number of purchases (multiplier = cash_level + 1)
+    SEQUENCE = (
+        ["cashPerLoop"] * 10 +
+        ["cloneCount"] * 10 +
+        ["wallJump"]
+    )
 
-        # Phase 1: cashPerLoop until 7 purchases (= 8x multiplier)
-        if cash_level < 7 and clones == 0:
-            if state.can_afford("cashPerLoop"):
-                return Action.buy("cashPerLoop")
-            return Action.run()
 
-        # Phase 2: buy 1st clone
-        if clones == 0:
-            if state.can_afford("cloneCount"):
-                return Action.buy("cloneCount")
-            return Action.run()
+class Tomjon6(FixedSequence):
+    """Human-discovered policy: 7c (8x mult), 1cl (kick off income), 3c (11x mult), 9cl (10 total), walljump.
 
-        # Phase 3: cashPerLoop until 10 purchases (= 11x multiplier)
-        if cash_level < 10 and clones == 1:
-            if state.can_afford("cashPerLoop"):
-                return Action.buy("cashPerLoop")
-            return Action.run()
+    Refinement of PreTomjon6: same 10 cash + 10 clones end state, but kicks off
+    clone income earlier with 1 clone after 7 cash, instead of waiting for full 11x mult.
+    """
 
-        # Phase 4: buy clones until 10
-        if clones < 10:
-            if state.can_afford("cloneCount"):
-                return Action.buy("cloneCount")
-            # While saving for clones, buy cash if cheap enough
-            if state.can_afford("cashPerLoop"):
-                return Action.buy("cashPerLoop")
-            return Action.run()
-
-        # Phase 5: greedy
-        return self._greedy.choose_action(state)
-
-    @property
-    def name(self) -> str:
-        return "Tomjon6"
+    SEQUENCE = (
+        ["cashPerLoop"] * 7 +
+        ["cloneCount"] * 1 +
+        ["cashPerLoop"] * 3 +
+        ["cloneCount"] * 9 +
+        ["wallJump"]
+    )
 
 
 class Lukas(Policy):
@@ -298,7 +273,72 @@ class Lukas(Policy):
         return f"Lukas-{self._extra_clones}"
 
 
-class MCTSDistilledV4(Policy):
+
+
+class MyskoSub15(FixedSequence):
+    """Mysko sub-15 candidate: 3c, cl, 7c, 9cl, 10c + wallJump."""
+
+    SEQUENCE = (
+        ["cashPerLoop"] * 3 +
+        ["cloneCount"] * 1 +
+        ["cashPerLoop"] * 7 +
+        ["cloneCount"] * 9 +
+        ["cashPerLoop"] * 10 +
+        ["wallJump"]
+    )
+
+
+class GraphFullV1(FixedSequence):
+    """graphfull's optimize winner (mysko course1, post-refactor): 164.1s mean.
+
+    2c, 3cl, 8c, 6cl, 10c + wallJump. The trailing 10x cash is the graphfull
+    over-investment artifact — it buys past the wallJump cost because the search
+    doesn't penalize wasted upgrades.
+    """
+
+    SEQUENCE = (
+        ["cashPerLoop"] * 2 +
+        ["cloneCount"] * 3 +
+        ["cashPerLoop"] * 8 +
+        ["cloneCount"] * 6 +
+        ["cashPerLoop"] * 10 +
+        ["wallJump"]
+    )
+
+
+class MyskoFast1(FixedSequence):
+    """Lexicase winner for mysko-1.6s-clones: 141.4s mean.
+
+    2c, 3cl, 1c, 1cl, 7c, 5cl, 1c, 1cl + wallJump = 10 cash + 10 clones.
+    Heavy interleaving pays off when clones are fast.
+    """
+
+    SEQUENCE = (
+        ["cashPerLoop"] * 2 +
+        ["cloneCount"] * 3 +
+        ["cashPerLoop"] * 1 +
+        ["cloneCount"] * 1 +
+        ["cashPerLoop"] * 7 +
+        ["cloneCount"] * 5 +
+        ["cashPerLoop"] * 1 +
+        ["cloneCount"] * 1 +
+        ["wallJump"]
+    )
+
+
+class MyskoFast1Variant(FixedSequence):
+    """User-suggested variant: 3c, 4cl, 7c, 6cl + wallJump = 10c + 10cl, 4 blocks."""
+
+    SEQUENCE = (
+        ["cashPerLoop"] * 3 +
+        ["cloneCount"] * 4 +
+        ["cashPerLoop"] * 7 +
+        ["cloneCount"] * 6 +
+        ["wallJump"]
+    )
+
+
+class MCTSDistilledV4(FixedSequence):
     """Best MCTS find: 168.3s. 2c,3cl,c,2cl,3c,2cl,4c,2cl,c + wallJump."""
 
     SEQUENCE = [
@@ -314,17 +354,8 @@ class MCTSDistilledV4(Policy):
         "wallJump",
     ]
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class MCTSDistilledV5(Policy):
+class MCTSDistilledV5(FixedSequence):
     """Hierarchical MCTS find: 167.6s. 3c,2cl,7c,7cl,3c + wallJump."""
 
     SEQUENCE = (
@@ -336,17 +367,8 @@ class MCTSDistilledV5(Policy):
         ["wallJump"]
     )
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class MCTSDistilledV6(Policy):
+class MCTSDistilledV6(FixedSequence):
     """GA find: 164.7s. 3c,3cl,c,cl,6c,5cl + wallJump."""
 
     SEQUENCE = (
@@ -359,17 +381,8 @@ class MCTSDistilledV6(Policy):
         ["wallJump"]
     )
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class MCTSDistilledV7(Policy):
+class MCTSDistilledV7(FixedSequence):
     """GA gen45 find: 164.3s. 2c,3cl,8c,6cl,c + wallJump."""
 
     SEQUENCE = (
@@ -381,17 +394,8 @@ class MCTSDistilledV7(Policy):
         ["wallJump"]
     )
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class MCTSDistilledV8(Policy):
+class MCTSDistilledV8(FixedSequence):
     """GA gen145 find: 163.9s. 2c,3cl,8c,7cl + wallJump."""
 
     SEQUENCE = (
@@ -402,17 +406,8 @@ class MCTSDistilledV8(Policy):
         ["wallJump"]
     )
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class Z3OptimalV1(Policy):
+class Z3OptimalV1(FixedSequence):
     """Z3 brute-force optimal (nc=10,nk=10): 2c,2cl,c,cl,3c,cl,4c,6cl + wallJump."""
 
     SEQUENCE = (
@@ -427,17 +422,8 @@ class Z3OptimalV1(Policy):
         ["wallJump"]
     )
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class SimSearchV1(Policy):
+class SimSearchV1(FixedSequence):
     """Sim-validated block search (nc=10,nk=10): 2c,4cl,8c,6cl + wallJump. 163.7s.
 
     Found via z3_optimizer.py: first used Z3/brute-force over all C(20,10)=184756
@@ -458,41 +444,8 @@ class SimSearchV1(Policy):
         ["wallJump"]
     )
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class FixedSequence(Policy):
-    """Follow a fixed sequence of upgrade purchases. Run course when can't afford next.
-    Tracks position by counting total upgrades bought, so it's stateless per sim."""
-
-    def __init__(self, sequence: list[str]):
-        self._sequence = list(sequence)
-
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self._sequence):
-            if state.can_afford("wallJump"):
-                return Action.buy("wallJump")
-            return Action.run()
-
-        target = self._sequence[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
-
-    @property
-    def name(self) -> str:
-        return "FixedSequence"
-
-
-class MCTSDistilledV1(Policy):
+class MCTSDistilledV1(FixedSequence):
     """First MCTS distillation (old flat cost model, interleaved)."""
 
     SEQUENCE = [
@@ -506,17 +459,8 @@ class MCTSDistilledV1(Policy):
         "cloneCount", "cashPerLoop", "cashPerLoop", "wallJump",
     ]
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class MCTSDistilledV2(Policy):
+class MCTSDistilledV2(FixedSequence):
     """Grid search result: batched 3cash, 8clone, 7cash."""
 
     SEQUENCE = (
@@ -526,17 +470,8 @@ class MCTSDistilledV2(Policy):
         ["wallJump"]
     )
 
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
-
-class MCTSDistilledV3(Policy):
+class MCTSDistilledV3(FixedSequence):
     """MCTS sequence search (seed=456, FSM costs)."""
 
     SEQUENCE = [
@@ -548,15 +483,6 @@ class MCTSDistilledV3(Policy):
         "cloneCount", "cashPerLoop", "cashPerLoop",
         "wallJump",
     ]
-
-    def choose_action(self, state: GameState) -> Action:
-        total_bought = sum(state.upgrades.values())
-        if total_bought >= len(self.SEQUENCE):
-            return Action.run()
-        target = self.SEQUENCE[total_bought]
-        if state.can_afford(target):
-            return Action.buy(target)
-        return Action.run()
 
 
 class CashThenClones(Policy):

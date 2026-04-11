@@ -1,0 +1,4 @@
+name=IGTAP Randomizer
+dll=IGTAPRandomizer.dll
+description=Room-based layout randomizer. Annotate rooms in the debug menu, then each course load reassembles those rooms in a random order based on a per-save seed. Target: course 4 first. Requires IGTAP Core
+actions=Build mod-randomizer/Randomizer.csproj and copy IGTAPRandomizer.dll into BepInEx/plugins/

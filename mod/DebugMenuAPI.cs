@@ -7,8 +7,9 @@ namespace IGTAPMod
     /// Public API for mods to register sections in the debug menu (F8) and HUD items.
     ///
     /// Usage from another BepInEx plugin:
-    ///   DebugMenuAPI.RegisterSection("My Section", 10, () => {
-    ///       GUILayout.Toggle(ref myBool, "My Toggle");
+    ///   DebugMenuAPI.RegisterSection("My Section", 10, panel => {
+    ///       panel.AddToggle("My Toggle", () => myBool, v => myBool = v);
+    ///       panel.AddButton("Do Thing", () => DoThing());
     ///   });
     ///   DebugMenuAPI.RegisterHudItem("MyMod", 10, () => myActive ? "[ACTIVE]" : null);
     /// </summary>
@@ -19,14 +20,16 @@ namespace IGTAPMod
 
         /// <summary>
         /// Register a section in the debug menu window.
+        /// The build callback receives a WidgetPanel and should add widgets to it.
+        /// This is called once when the tab is first shown (and on rebuild).
         /// </summary>
-        /// <param name="title">Section header text</param>
-        /// <param name="order">Sort order (lower = higher in menu)</param>
-        /// <param name="drawCallback">Called inside the menu's scroll view to draw your controls</param>
-        public static void RegisterSection(string title, int order, Action drawCallback)
+        /// <param name="title">Section header / tab label</param>
+        /// <param name="order">Sort order (lower = further left in tab bar)</param>
+        /// <param name="buildCallback">Called with a WidgetPanel to populate</param>
+        public static void RegisterSection(string title, int order, Action<WidgetPanel> buildCallback)
         {
             Sections.RemoveAll(s => s.Title == title);
-            Sections.Add(new MenuSection { Title = title, Order = order, Draw = drawCallback });
+            Sections.Add(new MenuSection { Title = title, Order = order, Build = buildCallback });
             Sections.Sort((a, b) => a.Order.CompareTo(b.Order));
         }
 
@@ -63,7 +66,7 @@ namespace IGTAPMod
         {
             public string Title;
             public int Order;
-            public Action Draw;
+            public Action<WidgetPanel> Build;
         }
 
         internal class HudItem

@@ -323,8 +323,9 @@ def simulate_policy(seq_names, n_sims=2000, seed=42):
     import argparse as _ap
     _p = _ap.ArgumentParser()
     _p.add_argument("--profile", "-p", default="mysko")
+    _p.add_argument("--course", "-c", default="course1")
     _args, _ = _p.parse_known_args()
-    config = load_config(profile=_args.profile)
+    config = load_config(profile=_args.profile, course=_args.course)
     full_seq = list(seq_names) + ["wallJump"]
     policy = FixedSequence(full_seq)
     sim = Simulator(config, seed=seed)

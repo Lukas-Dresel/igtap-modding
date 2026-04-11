@@ -69,7 +69,7 @@ namespace IGTAPMinimap
             DebugMenuAPI.RegisterHudItem("minimap.mode", 30, () =>
                 Enabled.Value ? $"[Map: {CurrentViewMode.Value}]" : null);
 
-            DebugMenuAPI.RegisterSection("Minimap", 40, DrawMenuSection);
+            DebugMenuAPI.RegisterSection("Minimap", 40, BuildMenuSection);
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded!");
         }
@@ -80,36 +80,36 @@ namespace IGTAPMinimap
             DebugMenuAPI.UnregisterSection("Minimap");
         }
 
-        private static void DrawMenuSection()
+        private static void BuildMenuSection(WidgetPanel panel)
         {
-            Enabled.Value = GUILayout.Toggle(Enabled.Value, "Enabled");
+            panel.AddToggle("Enabled",
+                () => Enabled.Value,
+                v => Enabled.Value = v);
 
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("View Mode", GUILayout.Width(85));
-            if (GUILayout.Button(CurrentViewMode.Value.ToString()))
-                CycleViewMode();
-            GUILayout.EndHorizontal();
+            panel.AddDropdown("View Mode",
+                () => CurrentViewMode.Value,
+                v => CurrentViewMode.Value = v);
 
-            GUILayout.BeginHorizontal();
-            GUILayout.Label("Position", GUILayout.Width(85));
-            if (GUILayout.Button(Position.Value.ToString()))
-            {
-                var vals = (ScreenCorner[])System.Enum.GetValues(typeof(ScreenCorner));
-                int idx = System.Array.IndexOf(vals, Position.Value);
-                Position.Value = vals[(idx + 1) % vals.Length];
-            }
-            GUILayout.EndHorizontal();
+            panel.AddDropdown("Position",
+                () => Position.Value,
+                v => Position.Value = v);
 
-            MinimapSize.Value = MenuWidgets.IntField("Size", MinimapSize.Value, 50);
+            panel.AddIntField("Size",
+                () => MinimapSize.Value,
+                v => MinimapSize.Value = v,
+                min: 50);
 
-            float newOpacity = MenuWidgets.FloatField("Opacity", MinimapOpacity.Value);
-            MinimapOpacity.Value = Mathf.Clamp01(newOpacity);
+            panel.AddFloatField("Opacity",
+                () => MinimapOpacity.Value,
+                v => MinimapOpacity.Value = Mathf.Clamp01(v));
 
-            float newZoom = MenuWidgets.FloatField("Follow Zoom", FollowZoom.Value);
-            FollowZoom.Value = Mathf.Max(0.5f, newZoom);
+            panel.AddFloatField("Follow Zoom",
+                () => FollowZoom.Value,
+                v => FollowZoom.Value = Mathf.Max(0.5f, v));
 
-            if (GUILayout.Button("Rescan Tilemaps"))
-                MinimapData.MarkDirty();
+            panel.AddSeparator();
+
+            panel.AddButton("Rescan Tilemaps", () => MinimapData.MarkDirty());
         }
 
         internal static void CycleViewMode()

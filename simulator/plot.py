@@ -24,7 +24,7 @@ def trace_run(config: SimConfig, policy, seed: int = 42) -> tuple[list[float], l
     times = [0.0]
     cash_history = [0.0]
 
-    while not state.has_wall_jump and state.time < 50000:
+    while not state.has_terminal and state.time < 50000:
         # Player runs
         if rng.random() < config.success_rate:
             run_time = rng.choice(config.success_times)
@@ -64,7 +64,7 @@ def trace_run(config: SimConfig, policy, seed: int = 42) -> tuple[list[float], l
             if clone_start_time is None and state.clone_count > 0:
                 clone_start_time = state.time
 
-            if state.has_wall_jump:
+            if state.has_terminal:
                 break
 
     return times, cash_history
@@ -74,8 +74,9 @@ def main():
     import argparse as _ap
     _p = _ap.ArgumentParser()
     _p.add_argument("--profile", "-p", default="mysko")
+    _p.add_argument("--course", "-c", default="course1")
     _args, _ = _p.parse_known_args()
-    config = load_config(profile=_args.profile)
+    config = load_config(profile=_args.profile, course=_args.course)
 
     policies = [
         ("MCTSDistilled", MCTSDistilled()),

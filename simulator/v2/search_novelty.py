@@ -46,7 +46,7 @@ class NoveltyGA:
         total = 0.0
         for s in self.eval_seeds:
             features = simulate_with_metrics(self.config, genome, random.Random(s))
-            total += features["time_to_walljump"]
+            total += features["time_to_terminal"]
         return total / self.n_eval_seeds
 
     def compute_novelty_scores(self, pop_bvs, archive_bvs):
@@ -173,8 +173,9 @@ if __name__ == "__main__":
     import argparse as _ap
     _p = _ap.ArgumentParser()
     _p.add_argument("--profile", "-p", default="mysko")
+    _p.add_argument("--course", "-c", default="course1")
     _args, _ = _p.parse_known_args()
-    config = load_config(profile=_args.profile)
+    config = load_config(profile=_args.profile, course=_args.course)
 
     ga = NoveltyGA(config, seed=42, pop_size=300, k_nearest=15,
                    novelty_weight=0.4, mutation_rate=0.4, n_eval_seeds=3)

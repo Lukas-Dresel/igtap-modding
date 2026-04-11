@@ -5,7 +5,7 @@ Two levels:
   Low level: evaluates a full block sequence via simulation
 
 Each high-level action is a (type, count) pair like ("cashPerLoop", 3).
-The sequence is a list of blocks. wallJump is implicit at the end.
+The sequence is a list of blocks. The terminal upgrade is implicit at the end.
 
 This compresses the search space dramatically:
   - Regular MCTS: each node is one purchase (branching ~2-3, depth ~20)
@@ -51,19 +51,10 @@ class HNode:
 def get_block_actions(node: HNode, config: SimConfig, max_block: int = 10) -> list[tuple[str, int]]:
     """Possible next blocks: (type, 1..max_block) for each type with remaining cap."""
     actions = []
-    cash_so_far = node.total_of("cashPerLoop")
-    clone_so_far = node.total_of("cloneCount")
-    cash_cap = config.upgrades["cashPerLoop"].cap
-    clone_cap = config.upgrades["cloneCount"].cap
-
-    cash_remaining = cash_cap - cash_so_far
-    clone_remaining = clone_cap - clone_so_far
-
-    for n in range(1, min(max_block, cash_remaining) + 1):
-        actions.append(("cashPerLoop", n))
-    for n in range(1, min(max_block, clone_remaining) + 1):
-        actions.append(("cloneCount", n))
-
+    for name, upg in config.buyable_upgrades.items():
+        remaining = upg.cap - node.total_of(name)
+        for n in range(1, min(max_block, remaining) + 1):
+            actions.append((name, n))
     return actions
 
 
@@ -75,7 +66,7 @@ class HierarchicalMCTS:
         self.max_block = max_block
 
     def evaluate(self, sequence: list[str]) -> float:
-        policy = FixedSequence(sequence + ["wallJump"])
+        policy = FixedSequence(sequence + [self.config.terminal_upgrade])
         state = self.sim.run(policy)
         return state.time
 

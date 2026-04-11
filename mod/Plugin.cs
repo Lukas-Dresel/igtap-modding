@@ -1,6 +1,7 @@
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
+using HarmonyLib;
 using UnityEngine;
 
 namespace IGTAPMod
@@ -13,6 +14,7 @@ namespace IGTAPMod
         public const string PluginVersion = "1.0.0";
 
         internal static ManualLogSource Log;
+        internal static Harmony HarmonyInstance;
 
         internal static ConfigEntry<KeyboardShortcut> UIToggleKey;
 
@@ -28,11 +30,21 @@ namespace IGTAPMod
                 new KeyboardShortcut(KeyCode.F9),
                 "Press to open/close the mod manager");
 
-            gameObject.AddComponent<DebugUI>();
+            HarmonyInstance = new Harmony(PluginGUID);
+            HarmonyInstance.PatchAll();
+
+            gameObject.AddComponent<GameUITheme>();
+            gameObject.AddComponent<DebugMenuUI>();
+            gameObject.AddComponent<HudOverlayUI>();
             gameObject.AddComponent<ModManagerUI>();
             gameObject.AddComponent<ModKeybindInjector>();
 
             Log.LogInfo($"{PluginName} v{PluginVersion} loaded!");
+        }
+
+        private void OnDestroy()
+        {
+            HarmonyInstance?.UnpatchSelf();
         }
     }
 }

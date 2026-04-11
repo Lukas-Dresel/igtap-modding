@@ -1,0 +1,208 @@
+{
+  "terminal_upgrade": "swapBlocksOnce",
+  "income_upgrade": "cashPerLoop",
+  "clone_upgrade": "cloneCount",
+  "course": {
+    "number": 4,
+    "base_reward": 10,
+    "tier": 10.0
+  },
+  "clone": {
+    "base_multiplier": 0.1
+  },
+  "gate_positions": {
+    "start": [
+      20438.6845703125,
+      10630.000122070312,
+      0.0
+    ],
+    "end": [
+      20200.400390625,
+      10684.000122070312,
+      0.0
+    ]
+  },
+  "transitions": {},
+  "upgrades": {
+    "global_cashPerLoop": {
+      "type": "global",
+      "base_cost": 0.0,
+      "scale_factor": 1.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        -324.599609375,
+        14487.907417297363,
+        0.0
+      ]
+    },
+    "global_fastCloneChance": {
+      "type": "global",
+      "base_cost": 0.0,
+      "scale_factor": 1.5,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        15017.400390625,
+        11959.477241516113,
+        0.0
+      ]
+    },
+    "fastCloneChance": {
+      "type": "local",
+      "base_cost": 260.0,
+      "scale_factor": 1.5,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 15,
+      "visible": true,
+      "active": true,
+      "position": [
+        18818.400390625,
+        10790.000122070312,
+        0.0
+      ]
+    },
+    "maxCloneBigness": {
+      "type": "global",
+      "base_cost": 300.0,
+      "scale_factor": 1.5,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        20731.400390625,
+        15110.477241516113,
+        0.0
+      ]
+    },
+    "maxCloneBigness_2": {
+      "type": "global",
+      "base_cost": 20000.0,
+      "scale_factor": 1.5,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        18988.400390625,
+        10790.000122070312,
+        0.0
+      ]
+    },
+    "cloneMult": {
+      "type": "local",
+      "base_cost": 220.0,
+      "scale_factor": 2.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 10,
+      "visible": true,
+      "active": true,
+      "position": [
+        19375.400390625,
+        10790.000122070312,
+        0.0
+      ]
+    },
+    "bigCloneChance": {
+      "type": "local",
+      "base_cost": 150.0,
+      "scale_factor": 1.4,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 15,
+      "visible": true,
+      "active": true,
+      "position": [
+        19158.400390625,
+        10790.000122070312,
+        0.0
+      ]
+    },
+    "swapBlocksOnce": {
+      "type": "movement",
+      "base_cost": 99900000.0,
+      "scale_factor": 1.5,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 15,
+      "visible": true,
+      "active": true,
+      "position": [
+        17767.400390625,
+        10788.477241516113,
+        0.0
+      ]
+    },
+    "prestige": {
+      "type": "local",
+      "base_cost": 120000.0,
+      "scale_factor": 1.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 2,
+      "visible": true,
+      "active": true,
+      "position": [
+        18586.400390625,
+        10790.00012254715,
+        0.0
+      ]
+    },
+    "global_cashPerLoop_2": {
+      "type": "global",
+      "base_cost": 0.0,
+      "scale_factor": 1.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        10032.3154296875,
+        14487.907417297363,
+        0.0
+      ]
+    },
+    "cloneCount": {
+      "type": "local",
+      "base_cost": 120.0,
+      "scale_factor": 1.24,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 50,
+      "visible": true,
+      "active": true,
+      "position": [
+        19545.400390625,
+        10790.000122070312,
+        0.0
+      ]
+    },
+    "cashPerLoop": {
+      "type": "local",
+      "base_cost": 30.0,
+      "scale_factor": 1.2,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 60,
+      "visible": true,
+      "active": true,
+      "position": [
+        19715.400390625,
+        10790.000122070312,
+        0.0
+      ]
+    }
+  }
+}

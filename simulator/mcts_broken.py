@@ -34,14 +34,14 @@ def run_until_can_buy(state: GameState, config: SimConfig, rng: random.Random,
 
         # Need to run a course to earn more
         if fsm_state == State.AT_EXIT:
-            advance(state, config, transition_time(State.AT_EXIT, State.AT_ENTRANCE), clone_start)
+            advance(state, config, transition_time(config, State.AT_EXIT, State.AT_ENTRANCE), clone_start)
             fsm_state = State.AT_ENTRANCE
         elif fsm_state == State.AT_BOX:
-            advance(state, config, transition_time(State.AT_BOX, State.AT_ENTRANCE), clone_start)
+            advance(state, config, transition_time(config, State.AT_BOX, State.AT_ENTRANCE), clone_start)
             fsm_state = State.AT_ENTRANCE
 
         if fsm_state == State.AT_ENTRANCE:
-            advance(state, config, transition_time(State.AT_ENTRANCE, State.RUNNING), clone_start)
+            advance(state, config, transition_time(config, State.AT_ENTRANCE, State.RUNNING), clone_start)
 
         # Run course
         if rng.random() < config.success_rate:
@@ -60,9 +60,9 @@ def do_buy(state: GameState, config: SimConfig, upgrade: str,
            clone_start: float | None, fsm_state: State) -> tuple[float | None, State]:
     """Execute a buy action. Mutates state."""
     if fsm_state == State.AT_EXIT:
-        advance(state, config, transition_time(State.AT_EXIT, State.AT_BOX), clone_start)
+        advance(state, config, transition_time(config, State.AT_EXIT, State.AT_BOX), clone_start)
     elif fsm_state == State.AT_BOX:
-        advance(state, config, transition_time(State.AT_BOX, State.AT_BOX), clone_start)
+        advance(state, config, transition_time(config, State.AT_BOX, State.AT_BOX), clone_start)
 
     state.buy_upgrade(upgrade)
     if clone_start is None and state.clone_count > 0:
@@ -84,7 +84,7 @@ class Node:
 
     @property
     def is_terminal(self) -> bool:
-        return self.state.has_wall_jump
+        return self.state.has_terminal
 
     def ucb1(self, c: float = 1.414) -> float:
         if self.visits == 0:
@@ -130,7 +130,7 @@ class MCTS:
     def _get_actions(self, node: Node) -> list[str]:
         """Affordable upgrades + 'skip' (save up and run more)."""
         actions = list(node.state.affordable_upgrades())
-        if not node.state.has_wall_jump:
+        if not node.state.has_terminal:
             actions.append("skip")
         return actions
 
@@ -159,10 +159,10 @@ class MCTS:
         if action == "skip":
             # Run one course without buying, then run until can buy again
             if fsm == State.AT_EXIT:
-                advance(child_state, self.config, transition_time(State.AT_EXIT, State.AT_ENTRANCE), clone_start)
+                advance(child_state, self.config, transition_time(config, State.AT_EXIT, State.AT_ENTRANCE), clone_start)
             elif fsm == State.AT_BOX:
-                advance(child_state, self.config, transition_time(State.AT_BOX, State.AT_ENTRANCE), clone_start)
-            advance(child_state, self.config, transition_time(State.AT_ENTRANCE, State.RUNNING), clone_start)
+                advance(child_state, self.config, transition_time(config, State.AT_BOX, State.AT_ENTRANCE), clone_start)
+            advance(child_state, self.config, transition_time(config, State.AT_ENTRANCE, State.RUNNING), clone_start)
             if self.rng.random() < self.config.success_rate:
                 rt = self.rng.choice(self.config.success_times)
                 advance(child_state, self.config, rt, clone_start)
@@ -176,7 +176,7 @@ class MCTS:
         else:
             # Buy the upgrade
             clone_start, fsm = do_buy(child_state, self.config, action, clone_start, fsm)
-            if not child_state.has_wall_jump:
+            if not child_state.has_terminal:
                 clone_start, fsm = run_until_can_buy(
                     child_state, self.config, self.rng, clone_start, fsm)
 
@@ -191,7 +191,7 @@ class MCTS:
         fsm = node.fsm_state
         buys = self._get_buys(node)
 
-        while not state.has_wall_jump and state.time < 100000:
+        while not state.has_terminal and state.time < 100000:
             affordable = state.affordable_upgrades()
             if not affordable:
                 clone_start, fsm = run_until_can_buy(
@@ -204,10 +204,10 @@ class MCTS:
             if self.rng.random() < 0.15:  # 15% chance to skip
                 # Run one course without buying
                 if fsm == State.AT_EXIT:
-                    advance(state, self.config, transition_time(State.AT_EXIT, State.AT_ENTRANCE), clone_start)
+                    advance(state, self.config, transition_time(config, State.AT_EXIT, State.AT_ENTRANCE), clone_start)
                 elif fsm == State.AT_BOX:
-                    advance(state, self.config, transition_time(State.AT_BOX, State.AT_ENTRANCE), clone_start)
-                advance(state, self.config, transition_time(State.AT_ENTRANCE, State.RUNNING), clone_start)
+                    advance(state, self.config, transition_time(config, State.AT_BOX, State.AT_ENTRANCE), clone_start)
+                advance(state, self.config, transition_time(config, State.AT_ENTRANCE, State.RUNNING), clone_start)
                 if self.rng.random() < self.config.success_rate:
                     rt = self.rng.choice(self.config.success_times)
                     advance(state, self.config, rt, clone_start)

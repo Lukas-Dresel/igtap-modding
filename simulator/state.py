@@ -1,7 +1,6 @@
 """Game state model with reward and cost calculations."""
 import math
 from dataclasses import dataclass, field
-from copy import deepcopy
 
 from config import SimConfig
 
@@ -29,29 +28,24 @@ class GameState:
 
     @property
     def clone_count(self) -> int:
-        return self.upgrades.get("cloneCount", 0)
+        return self.upgrades.get(self.config.clone_upgrade, 0)
 
     @property
     def cash_per_loop(self) -> int:
-        return self.upgrades.get("cashPerLoop", 0)
+        return self.upgrades.get(self.config.income_upgrade, 0)
 
     @property
-    def has_wall_jump(self) -> bool:
-        return self.upgrades.get("wallJump", 0) >= 1
+    def has_terminal(self) -> bool:
+        return self.upgrades.get(self.config.terminal_upgrade, 0) >= 1
 
     @property
     def reward_per_completion(self) -> float:
         """Player reward for completing the course."""
-        # reward = ceil(baseReward * (localCashPerLoop + 1))
-        # No global upgrades on level 1
         return math.ceil(self.config.base_reward * (self.cash_per_loop + 1))
 
     @property
     def clone_reward_per_completion(self) -> float:
-        """Reward per clone completion (base size, base multiplier).
-        Game uses math.ceil for on-screen clones (clonesScript.cs line 211).
-        Player is always on course 1, so clones are always on-screen."""
-        # per_clone = reward * 1 * 0.1
+        """Reward per clone completion."""
         return math.ceil(self.reward_per_completion * self.config.clone_base_multiplier)
 
     # --- Cost queries ---

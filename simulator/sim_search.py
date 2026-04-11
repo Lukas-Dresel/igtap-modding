@@ -105,13 +105,18 @@ def rle(seq):
     return " ".join(parts)
 
 
-def seq_to_names(seq):
-    return ["cashPerLoop" if v == 0 else "cloneCount" for v in seq]
+def seq_to_names(seq, config):
+    assert len(config.buyable_upgrade_names) == 2, (
+        f"sim_search block patterns only support exactly 2 buyable upgrades, "
+        f"got {len(config.buyable_upgrade_names)}: {config.buyable_upgrade_names}"
+    )
+    names = config.buyable_upgrade_names
+    return [names[0] if v == 0 else names[1] for v in seq]
 
 
 def evaluate(seq, config, n_sims, seed):
     """Evaluate a sequence in the stochastic simulator."""
-    names = seq_to_names(seq) + ["wallJump"]
+    names = seq_to_names(seq, config) + [config.terminal_upgrade]
     policy = FixedSequence(names)
     sim = Simulator(config, seed=seed)
     times = sim.run_batch(policy, n=n_sims)
@@ -141,8 +146,9 @@ def main():
     import argparse as _ap
     _p = _ap.ArgumentParser()
     _p.add_argument("--profile", "-p", default="mysko")
+    _p.add_argument("--course", "-c", default="course1")
     _args, _ = _p.parse_known_args()
-    config = load_config(profile=_args.profile)
+    config = load_config(profile=_args.profile, course=_args.course)
 
     print("=" * 72)
     print(f"Sim-based block search: nc={nc}, nk={nk}")
@@ -207,7 +213,7 @@ def main():
     # Winner
     best_mean, best_seq, best_stats = validated[0]
     print(f"\nBEST: {rle(best_seq)}  mean={best_mean:.2f}s")
-    print(f"  Full: {' → '.join(seq_to_names(best_seq))} → wallJump")
+    print(f"  Full: {' → '.join(seq_to_names(best_seq, config))} → {config.terminal_upgrade}")
 
 
 if __name__ == "__main__":

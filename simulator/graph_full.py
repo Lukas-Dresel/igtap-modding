@@ -11,18 +11,21 @@ import heapq
 from itertools import groupby
 
 from config import SimConfig, load_config
-from fsm import State, transition_time
 
 SCALE = 3
 
 
 def solve(config: SimConfig, verbose: bool = True) -> list[str]:
-    cash_cap = config.upgrades["cashPerLoop"].cap
-    clone_cap = config.upgrades["cloneCount"].cap
-    wj_cost = int(config.upgrades["wallJump"].cost_at(0)) * SCALE
+    income_name = config.income_upgrade
+    clone_name = config.clone_upgrade
+    terminal_name = config.terminal_upgrade
+    cash_cap = config.upgrades[income_name].cap
+    clone_cap = config.upgrades[clone_name].cap
+    wj_cost = int(config.upgrades[terminal_name].cost_at(0)) * SCALE
+    type_name = {1: income_name, 2: clone_name}
 
     avg_run = config.success_rate * config.avg_success_time + (1 - config.success_rate) * config.avg_failure_time
-    transition_back = transition_time(State.AT_EXIT, State.AT_ENTRANCE)
+    transition_back = config.travel_time("exit", "entrance")
     cycle_time = avg_run + transition_back
 
     max_cash = wj_cost + 100 * SCALE
@@ -56,12 +59,12 @@ def solve(config: SimConfig, verbose: bool = True) -> list[str]:
         reward = math.ceil(config.base_reward * (n_cash + 1))
         clone_reward = math.ceil(reward * config.clone_base_multiplier)
 
-        # === Buy wallJump ===
+        # === Buy terminal ===
         if cash >= wj_cost:
             if at_box:
-                trip = transition_time(State.AT_BOX, State.AT_BOX)
+                trip = config.travel_time(type_name[prev_type], terminal_name)
             else:
-                trip = transition_time(State.AT_EXIT, State.AT_BOX)
+                trip = config.travel_time("exit", terminal_name)
             wj_time = d + trip
             if wj_time < best_wj_time:
                 best_wj_time = wj_time
@@ -73,7 +76,7 @@ def solve(config: SimConfig, verbose: bool = True) -> list[str]:
         # === Buy upgrades ===
         def try_buy(name, n_c, n_cl, type_id):
             uc = config.upgrades[name]
-            count = n_c if name == "cashPerLoop" else n_cl
+            count = n_c if name == income_name else n_cl
             if count >= uc.cap:
                 return
             cost = int(uc.cost_at(count)) * SCALE
@@ -81,12 +84,12 @@ def solve(config: SimConfig, verbose: bool = True) -> list[str]:
                 return
 
             if at_box and prev_type == type_id:
-                trip = transition_time(State.AT_BOX, State.AT_BOX)
+                trip = config.travel_time(name, name)
             elif at_box:
-                trip = (transition_time(State.AT_BOX, State.AT_ENTRANCE) +
-                        transition_time(State.AT_EXIT, State.AT_BOX))
+                trip = (config.travel_time(type_name[prev_type], "entrance") +
+                        config.travel_time("exit", name))
             else:
-                trip = transition_time(State.AT_EXIT, State.AT_BOX)
+                trip = config.travel_time("exit", name)
 
             new_cash = cash - cost
             # Clone income during trip
@@ -96,7 +99,7 @@ def solve(config: SimConfig, verbose: bool = True) -> list[str]:
                 new_cash += cc * clone_reward * SCALE
             new_cash = min(new_cash, max_cash)
 
-            if name == "cashPerLoop":
+            if name == income_name:
                 ns = (n_c + 1, n_cl, new_cash, True, type_id)
             else:
                 ns = (n_c, n_cl + 1, new_cash, True, type_id)
@@ -108,14 +111,14 @@ def solve(config: SimConfig, verbose: bool = True) -> list[str]:
                 action[ns] = name
                 heapq.heappush(pq, (new_d, ns))
 
-        try_buy("cashPerLoop", n_cash, n_clone, 1)
-        try_buy("cloneCount", n_cash, n_clone, 2)
+        try_buy(income_name, n_cash, n_clone, 1)
+        try_buy(clone_name, n_cash, n_clone, 2)
 
         # === Run one cycle ===
         if at_box:
-            pre = transition_time(State.AT_BOX, State.AT_ENTRANCE)
+            pre = config.travel_time(type_name[prev_type], "entrance")
         else:
-            pre = transition_time(State.AT_EXIT, State.AT_ENTRANCE)
+            pre = config.travel_time("exit", "entrance")
 
         step_time = pre + cycle_time
 
@@ -140,7 +143,7 @@ def solve(config: SimConfig, verbose: bool = True) -> list[str]:
 
         # === Leave box ===
         if at_box:
-            lt = transition_time(State.AT_BOX, State.AT_ENTRANCE)
+            lt = config.travel_time(type_name[prev_type], "entrance")
             ce = 0
             if n_clone > 0:
                 interval = config.clone_course_duration / n_clone
@@ -160,11 +163,11 @@ def solve(config: SimConfig, verbose: bool = True) -> list[str]:
     state = best_wj_state
     while state in prev:
         act = action[state]
-        if act in ("cashPerLoop", "cloneCount"):
+        if act in (income_name, clone_name):
             path.append(act)
         state = prev[state]
     path.reverse()
-    path.append("wallJump")
+    path.append(terminal_name)
 
     if verbose:
         print(f"Optimal time (full graph): {best_wj_time:.1f}s")
@@ -173,7 +176,7 @@ def solve(config: SimConfig, verbose: bool = True) -> list[str]:
             n = len(list(g))
             parts.append(f"{n}x{k}" if n > 1 else k)
         print(f"Summary: {', '.join(parts)}")
-        print(f"Totals: {path.count('cashPerLoop')} cash + {path.count('cloneCount')} clone + wallJump")
+        print(f"Totals: {path.count(income_name)} cash + {path.count(clone_name)} clone + {terminal_name}")
 
     return path
 
@@ -182,8 +185,9 @@ if __name__ == "__main__":
     import argparse as _ap
     _p = _ap.ArgumentParser()
     _p.add_argument("--profile", "-p", default="mysko")
+    _p.add_argument("--course", "-c", default="course1")
     _args, _ = _p.parse_known_args()
-    config = load_config(profile=_args.profile)
+    config = load_config(profile=_args.profile, course=_args.course)
     path = solve(config)
 
     from simulator import Simulator

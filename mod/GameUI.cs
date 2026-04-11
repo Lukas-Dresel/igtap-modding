@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -115,13 +116,25 @@ namespace IGTAPMod
         /// Create a panel with a background color. Returns its RectTransform.
         /// </summary>
         public static RectTransform CreatePanel(Transform parent, string name,
-            Color? color = null)
+            Color? color = null, bool applyTheme = false)
         {
             var go = new GameObject(name, typeof(RectTransform));
             go.transform.SetParent(parent, false);
 
             var image = go.AddComponent<Image>();
-            image.color = color ?? UIStyle.PanelBackground;
+
+            if (applyTheme)
+            {
+                var theme = GameUITheme.Instance;
+                if (theme != null && theme.IsReady)
+                    theme.ApplyPanelStyle(image);
+                else
+                    image.color = color ?? UIStyle.PanelBackground;
+            }
+            else
+            {
+                image.color = color ?? UIStyle.PanelBackground;
+            }
 
             return go.GetComponent<RectTransform>();
         }
@@ -150,6 +163,7 @@ namespace IGTAPMod
 
         /// <summary>
         /// Create a clickable button with a text label.
+        /// Uses the game's actual button sprite and color block when available.
         /// </summary>
         public static Button CreateButton(Transform parent, string name, string label,
             Action onClick, float fontSize = 20f, Color? bgColor = null)
@@ -158,15 +172,26 @@ namespace IGTAPMod
             go.transform.SetParent(parent, false);
 
             var image = go.AddComponent<Image>();
-            image.color = bgColor ?? UIStyle.ButtonNormal;
+            image.color = Color.white;
+
+            // Use game's sprite for rounded shape, our own color block for contrast
+            var theme = GameUITheme.Instance;
+            if (theme != null && theme.IsReady && theme.ButtonSprite != null)
+            {
+                image.sprite = theme.ButtonSprite;
+                image.type = Image.Type.Sliced;
+            }
 
             var button = go.AddComponent<Button>();
+            button.targetGraphic = image;
             var colors = button.colors;
             colors.normalColor = bgColor ?? UIStyle.ButtonNormal;
             colors.highlightedColor = UIStyle.ButtonHighlight;
             colors.pressedColor = UIStyle.ButtonPressed;
             colors.selectedColor = UIStyle.ButtonHighlight;
             colors.disabledColor = UIStyle.ButtonDisabled;
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0.1f;
             button.colors = colors;
 
             if (onClick != null)
@@ -207,19 +232,32 @@ namespace IGTAPMod
             var bgImage = bgObj.AddComponent<Image>();
             bgImage.color = UIStyle.ButtonNormal;
             var bgLayout = bgObj.AddComponent<LayoutElement>();
-            bgLayout.preferredWidth = 24;
-            bgLayout.preferredHeight = 24;
+            bgLayout.preferredWidth = 28;
+            bgLayout.preferredHeight = 28;
 
-            // Checkmark (inner square)
+            // Use game's toggle sprite if available
+            var theme = GameUITheme.Instance;
+            if (theme != null && theme.IsReady && theme.ToggleBgSprite != null)
+            {
+                bgImage.sprite = theme.ToggleBgSprite;
+                bgImage.type = Image.Type.Sliced;
+            }
+
+            // Checkmark
             var checkObj = new GameObject("Checkmark", typeof(RectTransform));
             checkObj.transform.SetParent(bgObj.transform, false);
             var checkRt = checkObj.GetComponent<RectTransform>();
-            checkRt.anchorMin = new Vector2(0.15f, 0.15f);
-            checkRt.anchorMax = new Vector2(0.85f, 0.85f);
+            checkRt.anchorMin = new Vector2(0.1f, 0.1f);
+            checkRt.anchorMax = new Vector2(0.9f, 0.9f);
             checkRt.offsetMin = Vector2.zero;
             checkRt.offsetMax = Vector2.zero;
             var checkImage = checkObj.AddComponent<Image>();
             checkImage.color = UIStyle.Accent;
+            if (theme != null && theme.IsReady && theme.ToggleCheckSprite != null)
+            {
+                checkImage.sprite = theme.ToggleCheckSprite;
+                checkImage.type = Image.Type.Simple;
+            }
 
             // Label text
             var labelTmp = CreateText(go.transform, "Label", label, UIStyle.FontSizeBody);
@@ -231,6 +269,32 @@ namespace IGTAPMod
             toggle.isOn = value;
             toggle.graphic = checkImage;
             toggle.targetGraphic = bgImage;
+
+            // Use game's sprite for shape but keep our own colors
+            var toggleTheme = GameUITheme.Instance;
+            if (toggleTheme != null && toggleTheme.IsReady)
+            {
+                if (toggleTheme.ToggleBgSprite != null)
+                {
+                    bgImage.sprite = toggleTheme.ToggleBgSprite;
+                    bgImage.type = Image.Type.Sliced;
+                }
+                if (toggleTheme.ToggleCheckSprite != null)
+                {
+                    checkImage.sprite = toggleTheme.ToggleCheckSprite;
+                    checkImage.type = Image.Type.Simple;
+                }
+            }
+            // Game-matching colors: white bg, green hover, blue checkmark
+            bgImage.color = Color.white;
+            checkImage.color = UIStyle.Accent;
+            var toggleColors = toggle.colors;
+            toggleColors.normalColor = UIStyle.ControlNormal;
+            toggleColors.highlightedColor = UIStyle.ControlHighlight;
+            toggleColors.pressedColor = UIStyle.ControlPressed;
+            toggleColors.colorMultiplier = 1f;
+            toggleColors.fadeDuration = 0.1f;
+            toggle.colors = toggleColors;
 
             if (onChanged != null)
                 toggle.onValueChanged.AddListener((v) => onChanged(v));
@@ -310,6 +374,11 @@ namespace IGTAPMod
             slider.maxValue = max;
             slider.value = value;
             slider.wholeNumbers = wholeNumbers;
+
+            // Apply game theme if available
+            var theme = GameUITheme.Instance;
+            if (theme != null && theme.IsReady)
+                theme.ApplySliderStyle(slider, bgImage, fillImage, handleImage);
 
             if (onChanged != null)
                 slider.onValueChanged.AddListener((v) => onChanged(v));
@@ -454,6 +523,178 @@ namespace IGTAPMod
         public static DraggableUI MakeDraggable(RectTransform rt)
         {
             return rt.gameObject.AddComponent<DraggableUI>();
+        }
+
+        // =====================================================================
+        //  Additional Element Creation
+        // =====================================================================
+
+        /// <summary>
+        /// Create a TMP_InputField for text entry.
+        /// </summary>
+        public static TMP_InputField CreateInputField(Transform parent, string name,
+            string placeholder = "", Action<string> onSubmit = null, float fontSize = 16f)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+
+            var bgImage = go.AddComponent<Image>();
+            bgImage.color = UIStyle.InputFieldBg;
+            var theme2 = GameUITheme.Instance;
+            if (theme2 != null && theme2.IsReady && theme2.ButtonSprite != null)
+            {
+                bgImage.sprite = theme2.ButtonSprite;
+                bgImage.type = Image.Type.Sliced;
+            }
+
+            // Text area viewport
+            var textArea = new GameObject("TextArea", typeof(RectTransform));
+            textArea.transform.SetParent(go.transform, false);
+            var textAreaRt = textArea.GetComponent<RectTransform>();
+            textAreaRt.anchorMin = Vector2.zero;
+            textAreaRt.anchorMax = Vector2.one;
+            textAreaRt.offsetMin = new Vector2(6, 2);
+            textAreaRt.offsetMax = new Vector2(-6, -2);
+            textArea.AddComponent<RectMask2D>();
+
+            // Placeholder
+            var phGo = new GameObject("Placeholder", typeof(RectTransform));
+            phGo.transform.SetParent(textArea.transform, false);
+            var phRt = phGo.GetComponent<RectTransform>();
+            phRt.anchorMin = Vector2.zero;
+            phRt.anchorMax = Vector2.one;
+            phRt.offsetMin = Vector2.zero;
+            phRt.offsetMax = Vector2.zero;
+            var phTmp = phGo.AddComponent<TextMeshProUGUI>();
+            phTmp.text = placeholder;
+            phTmp.fontSize = fontSize;
+            phTmp.color = UIStyle.TextMuted;
+            phTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            var font = GetGameFont();
+            if (font != null) phTmp.font = font;
+
+            // Text display
+            var textGo = new GameObject("Text", typeof(RectTransform));
+            textGo.transform.SetParent(textArea.transform, false);
+            var textRt = textGo.GetComponent<RectTransform>();
+            textRt.anchorMin = Vector2.zero;
+            textRt.anchorMax = Vector2.one;
+            textRt.offsetMin = Vector2.zero;
+            textRt.offsetMax = Vector2.zero;
+            var textTmp = textGo.AddComponent<TextMeshProUGUI>();
+            textTmp.fontSize = fontSize;
+            textTmp.color = UIStyle.TextPrimary;
+            textTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            if (font != null) textTmp.font = font;
+
+            // InputField component
+            var inputField = go.AddComponent<TMP_InputField>();
+            inputField.textViewport = textAreaRt;
+            inputField.textComponent = textTmp;
+            inputField.placeholder = phTmp;
+            inputField.fontAsset = font;
+            inputField.pointSize = fontSize;
+
+            // Caret color
+            inputField.caretColor = UIStyle.Accent;
+            inputField.selectionColor = new Color(UIStyle.Accent.r, UIStyle.Accent.g, UIStyle.Accent.b, 0.3f);
+
+            if (onSubmit != null)
+                inputField.onSubmit.AddListener(s => onSubmit(s));
+
+            return inputField;
+        }
+
+        /// <summary>
+        /// Create a tab button. Active tab appears raised with accent bar and
+        /// connects visually to the content below. Inactive tabs are recessed.
+        /// </summary>
+        public static Button CreateTabButton(Transform parent, string name, string label,
+            Action onClick, bool isActive)
+        {
+            var go = new GameObject(name, typeof(RectTransform));
+            go.transform.SetParent(parent, false);
+
+            // Tab background - active is lighter (matches content), inactive is dark
+            var image = go.AddComponent<Image>();
+            Color activeBg = new Color(0.16f, 0.16f, 0.22f, 1f);
+            Color inactiveBg = new Color(0.08f, 0.08f, 0.11f, 1f);
+            image.color = isActive ? activeBg : inactiveBg;
+
+            var button = go.AddComponent<Button>();
+            button.targetGraphic = image;
+            var colors = button.colors;
+            colors.normalColor = isActive ? activeBg : inactiveBg;
+            colors.highlightedColor = isActive ? activeBg : UIStyle.TabHover;
+            colors.pressedColor = UIStyle.ButtonPressed;
+            colors.selectedColor = colors.normalColor;
+            colors.disabledColor = UIStyle.ButtonDisabled;
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0.1f;
+            button.colors = colors;
+
+            if (onClick != null)
+                button.onClick.AddListener(() => onClick());
+
+            // Active tab: accent bar on top + raised effect (no bottom border)
+            if (isActive)
+            {
+                // Top accent bar
+                var accent = new GameObject("Accent", typeof(RectTransform));
+                accent.transform.SetParent(go.transform, false);
+                var accentRt = accent.GetComponent<RectTransform>();
+                accentRt.anchorMin = new Vector2(0, 1);
+                accentRt.anchorMax = new Vector2(1, 1);
+                accentRt.pivot = new Vector2(0.5f, 1);
+                accentRt.sizeDelta = new Vector2(0, 3);
+                accent.AddComponent<Image>().color = UIStyle.Accent;
+
+                // Side highlights (subtle light edges for raised look)
+                var leftEdge = new GameObject("LeftEdge", typeof(RectTransform));
+                leftEdge.transform.SetParent(go.transform, false);
+                var leRt = leftEdge.GetComponent<RectTransform>();
+                leRt.anchorMin = new Vector2(0, 0);
+                leRt.anchorMax = new Vector2(0, 1);
+                leRt.pivot = new Vector2(0, 0.5f);
+                leRt.sizeDelta = new Vector2(1, 0);
+                leftEdge.AddComponent<Image>().color = new Color(1f, 1f, 1f, 0.06f);
+
+                var rightEdge = new GameObject("RightEdge", typeof(RectTransform));
+                rightEdge.transform.SetParent(go.transform, false);
+                var reRt = rightEdge.GetComponent<RectTransform>();
+                reRt.anchorMin = new Vector2(1, 0);
+                reRt.anchorMax = new Vector2(1, 1);
+                reRt.pivot = new Vector2(1, 0.5f);
+                reRt.sizeDelta = new Vector2(1, 0);
+                rightEdge.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.15f);
+            }
+            else
+            {
+                // Inactive: bottom border to separate from content
+                var botBorder = new GameObject("BottomBorder", typeof(RectTransform));
+                botBorder.transform.SetParent(go.transform, false);
+                var bbRt = botBorder.GetComponent<RectTransform>();
+                bbRt.anchorMin = new Vector2(0, 0);
+                bbRt.anchorMax = new Vector2(1, 0);
+                bbRt.pivot = new Vector2(0.5f, 0);
+                bbRt.sizeDelta = new Vector2(0, 1);
+                botBorder.AddComponent<Image>().color = new Color(0f, 0f, 0f, 0.4f);
+            }
+
+            // Label
+            var labelTmp = CreateText(go.transform, "Label", label,
+                UIStyle.FontSizeSmall,
+                color: isActive ? UIStyle.TextPrimary : UIStyle.TextMuted,
+                alignment: TextAlignmentOptions.Center);
+            if (isActive) labelTmp.fontStyle = TMPro.FontStyles.Bold;
+            labelTmp.overflowMode = TextOverflowModes.Masking;
+            var labelRt = labelTmp.GetComponent<RectTransform>();
+            labelRt.anchorMin = Vector2.zero;
+            labelRt.anchorMax = Vector2.one;
+            labelRt.offsetMin = new Vector2(10, 0);
+            labelRt.offsetMax = new Vector2(-10, -3);
+
+            return button;
         }
 
         // =====================================================================

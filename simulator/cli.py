@@ -9,7 +9,7 @@ from state import GameState
 from policy import (
     SaveForWallJump, CheapestFirst, ClonesFirst, CashFirst, GreedyROI, RandomPolicy,
     PreTomjon6, Tomjon6, Lukas, MCTSDistilledV1, MCTSDistilledV2, MCTSDistilledV3, MCTSDistilledV4, MCTSDistilledV5, MCTSDistilledV6, MCTSDistilledV7, MCTSDistilledV8,
-    Z3OptimalV1, SimSearchV1,
+    Z3OptimalV1, SimSearchV1, MyskoSub15, GraphFullV1, MyskoFast1, MyskoFast1Variant,
     FixedSequence, CashThenClones,
 )
 
@@ -40,6 +40,10 @@ ALL_POLICIES = {
     "v8": lambda: MCTSDistilledV8(),
     "z3v1": lambda: Z3OptimalV1(),
     "ss1": lambda: SimSearchV1(),
+    "mysko_sub_15": lambda: MyskoSub15(),
+    "gfv1": lambda: GraphFullV1(),
+    "myskofast1": lambda: MyskoFast1(),
+    "myskofast1v": lambda: MyskoFast1Variant(),
     "ct1_5": lambda: CashThenClones(cash_first=1, clone_target=5),
     "ct3_5": lambda: CashThenClones(cash_first=3, clone_target=5),
 }
@@ -48,8 +52,9 @@ ALL_POLICIES = {
 TOP5 = ["ss1", "z3v1", "v8", "v7", "v6"]
 
 
-def compare_policies(n_sims: int = 1000, seed: int = 42, mcts_iters: int = 0, only: str = None, profile: str = "mysko"):
-    config = load_config(profile=profile)
+def compare_policies(n_sims: int = 1000, seed: int = 42, mcts_iters: int = 0, only: str = None,
+                     profile: str = "mysko", course: str = "course1", plot: str | None = None):
+    config = load_config(profile=profile, course=course)
     sim = Simulator(config, seed=seed)
 
     if only == "all":
@@ -63,13 +68,18 @@ def compare_policies(n_sims: int = 1000, seed: int = 42, mcts_iters: int = 0, on
 
     policies = [ALL_POLICIES[k]() for k in keys if k in ALL_POLICIES]
 
+    # Filter out policies incompatible with this course
+    skipped = [p.name for p in policies if not p.compatible_with(config)]
+    policies = [p for p in policies if p.compatible_with(config)]
+    if skipped:
+        print(f"Skipped {len(skipped)} incompatible policies: {', '.join(skipped)}")
+
     print(f"Running {n_sims} simulations per policy...")
     print(f"Success rate: {config.success_rate:.1%}")
     print(f"Avg success time: {config.avg_success_time:.1f}s")
     print(f"Avg failure time: {config.avg_failure_time:.1f}s")
     print(f"Clone course duration: {config.clone_course_duration:.1f}s")
-    from fsm import TRANSITIONS, State
-    print(f"Transitions: exit→entrance={TRANSITIONS[(State.AT_EXIT, State.AT_ENTRANCE)]}s  exit→box={TRANSITIONS[(State.AT_EXIT, State.AT_BOX)]}s  box→box={TRANSITIONS[(State.AT_BOX, State.AT_BOX)]}s  box→entrance={TRANSITIONS[(State.AT_BOX, State.AT_ENTRANCE)]}s")
+    print(f"Transitions: {len(config.transitions)} pairs modeled")
     print()
 
     results = []
@@ -95,6 +105,11 @@ def compare_policies(n_sims: int = 1000, seed: int = 42, mcts_iters: int = 0, on
     print(f"\n--- Best policy: {results[0][0]} ---")
     best_policy = next(p for p in policies if p.name == results[0][0])
     trace_run(config, best_policy, seed=seed)
+
+    # Trace plot: cash on hand, income rates, cumulative income (median + bands)
+    if plot:
+        from tracing import plot_traces
+        plot_traces(config, policies, n_sims=100, seed=seed, out_path=plot)
 
     # Distill MCTS into a deterministic policy
     if mcts_iters > 0:
@@ -139,7 +154,7 @@ def distill_mcts(config, iterations=500, n_runs=10, seed=42):
         clone_start_time = None
         sequence = []
 
-        while not state.has_wall_jump and state.time < 50000:
+        while not state.has_terminal and state.time < 50000:
             # Run course
             run_time, success = sim.sample_player_run()
             if state.clone_count > 0 and clone_start_time is not None:
@@ -166,7 +181,7 @@ def distill_mcts(config, iterations=500, n_runs=10, seed=42):
                 if clone_start_time is None and state.clone_count > 0:
                     clone_start_time = state.time
 
-                if state.has_wall_jump:
+                if state.has_terminal:
                     break
 
         all_sequences.append(sequence)
@@ -206,5 +221,9 @@ if __name__ == "__main__":
     parser.add_argument("mcts_iters", type=int, nargs="?", default=0)
     parser.add_argument("only", nargs="?", default=None)
     parser.add_argument("--profile", "-p", default="mysko")
+    parser.add_argument("--course", "-c", default="course1")
+    parser.add_argument("--plot", nargs="?", const="cash_on_hand.png", default=None,
+                        help="Plot cash on hand over time. Optionally specify output path.")
     args = parser.parse_args()
-    compare_policies(n_sims=args.n_sims, mcts_iters=args.mcts_iters, only=args.only, profile=args.profile)
+    compare_policies(n_sims=args.n_sims, mcts_iters=args.mcts_iters, only=args.only,
+                     profile=args.profile, course=args.course, plot=args.plot)

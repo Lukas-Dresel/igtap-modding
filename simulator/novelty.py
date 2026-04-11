@@ -32,8 +32,9 @@ class NoveltyGA:
         self.mutation_rate = mutation_rate
         self.archive_rate = archive_rate
         self.n_eval_seeds = n_eval_seeds
-        self.cash_cap = config.upgrades["cashPerLoop"].cap
-        self.clone_cap = config.upgrades["cloneCount"].cap
+        self.upgrade_names = config.buyable_upgrade_names
+        self.upgrade_caps = {name: config.buyable_upgrades[name].cap
+                            for name in self.upgrade_names}
         self.eval_seeds = [seed + i * 7919 for i in range(n_eval_seeds)]
         self.archive = []  # list of behavior vectors
 
@@ -57,7 +58,7 @@ class NoveltyGA:
         total = 0.0
         for s in self.eval_seeds:
             features = simulate_with_metrics(self.config, genome, s)
-            total += features["time_to_walljump"]
+            total += features["time_to_terminal"]
         return total / self.n_eval_seeds
 
     def compute_novelty_scores(self, pop_bvs: list[list[float]], archive_bvs: list[list[float]]) -> list[float]:
@@ -105,9 +106,11 @@ class NoveltyGA:
         return math.sqrt(total)
 
     def random_genome(self) -> list[str]:
-        n_cash = self.rng.randint(0, min(20, self.cash_cap))
-        n_clone = self.rng.randint(0, min(15, self.clone_cap))
-        genome = ["cashPerLoop"] * n_cash + ["cloneCount"] * n_clone
+        genome = []
+        for name in self.upgrade_names:
+            cap = self.upgrade_caps[name]
+            n = self.rng.randint(0, min(20, cap))
+            genome.extend([name] * n)
         self.rng.shuffle(genome)
         return genome
 
@@ -124,7 +127,7 @@ class NoveltyGA:
 
         if op == "insert" and len(genome) < 40:
             genome.insert(self.rng.randint(0, len(genome)),
-                         self.rng.choice(["cashPerLoop", "cloneCount"]))
+                         self.rng.choice(self.upgrade_names))
         elif op == "delete" and len(genome) > 1:
             genome.pop(self.rng.randint(0, len(genome) - 1))
         elif op == "swap" and len(genome) > 1:
@@ -132,7 +135,9 @@ class NoveltyGA:
             genome[i], genome[j] = genome[j], genome[i]
         elif op == "change" and genome:
             pos = self.rng.randint(0, len(genome) - 1)
-            genome[pos] = "cloneCount" if genome[pos] == "cashPerLoop" else "cashPerLoop"
+            others = [n for n in self.upgrade_names if n != genome[pos]]
+            if others:
+                genome[pos] = self.rng.choice(others)
         elif op == "shuffle_block" and len(genome) > 2:
             start = self.rng.randint(0, len(genome) - 2)
             end = self.rng.randint(start + 1, min(start + 8, len(genome)))
@@ -144,14 +149,11 @@ class NoveltyGA:
 
     def _clamp(self, genome: list[str]) -> list[str]:
         result = []
-        cash, clone = 0, 0
+        counts = {name: 0 for name in self.upgrade_names}
         for g in genome:
-            if g == "cashPerLoop" and cash < self.cash_cap:
+            if g in counts and counts[g] < self.upgrade_caps[g]:
                 result.append(g)
-                cash += 1
-            elif g == "cloneCount" and clone < self.clone_cap:
-                result.append(g)
-                clone += 1
+                counts[g] += 1
         return result
 
     def tournament_select(self, scored_pop, k=3):

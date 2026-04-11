@@ -7,7 +7,7 @@ namespace IGTAPFreeplay
     {
         public static void Register()
         {
-            // HUD items
+            // HUD items (unchanged -- these are already data-only)
             DebugMenuAPI.RegisterHudItem("freeplay.dash", 10, () =>
             {
                 var p = GameState.Player;
@@ -36,57 +36,89 @@ namespace IGTAPFreeplay
             DebugMenuAPI.RegisterHudItem("freeplay.noclip", 21, () =>
                 Plugin.NoclipActive ? "[NOCLIP]" : null);
 
-            // Menu sections
-            DebugMenuAPI.RegisterSection("Unlocks", 10, DrawUnlocks);
-            DebugMenuAPI.RegisterSection("Max Counts", 20, DrawCounts);
-            DebugMenuAPI.RegisterSection("Speed", 30, DrawSpeed);
-            DebugMenuAPI.RegisterSection("Currency", 40, DrawCurrency);
+            // Menu sections -- now using widget API
+            DebugMenuAPI.RegisterSection("Unlocks", 10, BuildUnlocks);
+            DebugMenuAPI.RegisterSection("Max Counts", 20, BuildCounts);
+            DebugMenuAPI.RegisterSection("Speed", 30, BuildSpeed);
+            DebugMenuAPI.RegisterSection("Currency", 40, BuildCurrency);
         }
 
-        private static void DrawUnlocks()
+        private static void BuildUnlocks(WidgetPanel panel)
         {
-            var p = GameState.Player;
-            if (p == null) { GUILayout.Label("(no player found)"); return; }
+            panel.AddLabel(() => GameState.Player == null ? "(no player found)" : null,
+                UIStyle.FontSizeSmall, UIStyle.TextMuted);
 
-            p.dashUnlocked = GUILayout.Toggle(p.dashUnlocked, "Dash");
-            p.wallJumpUnlocked = GUILayout.Toggle(p.wallJumpUnlocked, "Wall Jump");
-            p.doubleJumpUnlocked = GUILayout.Toggle(p.doubleJumpUnlocked, "Double Jump");
-            p.blockSwapUnlocked = GUILayout.Toggle(p.blockSwapUnlocked, "Block Swap");
-            Plugin.GodMode.Value = GUILayout.Toggle(Plugin.GodMode.Value, "God Mode");
+            panel.AddToggle("Dash",
+                () => GameState.Player?.dashUnlocked ?? false,
+                v => { if (GameState.Player != null) GameState.Player.dashUnlocked = v; });
+
+            panel.AddToggle("Wall Jump",
+                () => GameState.Player?.wallJumpUnlocked ?? false,
+                v => { if (GameState.Player != null) GameState.Player.wallJumpUnlocked = v; });
+
+            panel.AddToggle("Double Jump",
+                () => GameState.Player?.doubleJumpUnlocked ?? false,
+                v => { if (GameState.Player != null) GameState.Player.doubleJumpUnlocked = v; });
+
+            panel.AddToggle("Block Swap",
+                () => GameState.Player?.blockSwapUnlocked ?? false,
+                v => { if (GameState.Player != null) GameState.Player.blockSwapUnlocked = v; });
+
+            panel.AddToggle("God Mode",
+                () => Plugin.GodMode.Value,
+                v => Plugin.GodMode.Value = v);
         }
 
-        private static void DrawCounts()
+        private static void BuildCounts(WidgetPanel panel)
         {
-            var p = GameState.Player;
-            if (p == null) return;
+            panel.AddIntField("Air Dashes",
+                () => GameState.Player?.maxAirDashes ?? 0,
+                v => { if (GameState.Player != null) GameState.Player.maxAirDashes = v; },
+                infToggle: Plugin.InfiniteDashes);
 
-            p.maxAirDashes = MenuWidgets.IntFieldInf("Air Dashes", p.maxAirDashes, Plugin.InfiniteDashes);
-            p.maxAirJumps = MenuWidgets.IntFieldInf("Air Jumps", p.maxAirJumps, Plugin.InfiniteJumps);
-            p.maxWallJumps = MenuWidgets.IntFieldInf("Wall Jumps", p.maxWallJumps, Plugin.InfiniteWallJumps);
+            panel.AddIntField("Air Jumps",
+                () => GameState.Player?.maxAirJumps ?? 0,
+                v => { if (GameState.Player != null) GameState.Player.maxAirJumps = v; },
+                infToggle: Plugin.InfiniteJumps);
+
+            panel.AddIntField("Wall Jumps",
+                () => GameState.Player?.maxWallJumps ?? 0,
+                v => { if (GameState.Player != null) GameState.Player.maxWallJumps = v; },
+                infToggle: Plugin.InfiniteWallJumps);
         }
 
-        private static void DrawSpeed()
+        private static void BuildSpeed(WidgetPanel panel)
         {
-            var p = GameState.Player;
-            if (p == null) return;
+            panel.AddFloatField("Run Speed",
+                () => GameState.Player?.runSpeed ?? 0f,
+                v => { if (GameState.Player != null) GameState.Player.runSpeed = v; });
 
-            p.runSpeed = MenuWidgets.FloatField("Run Speed", p.runSpeed);
-            p.jumpForce = MenuWidgets.FloatField("Jump Force", p.jumpForce);
-            float ds = GameState.DashSpeed;
-            float newDs = MenuWidgets.FloatField("Dash Speed", ds);
-            if (newDs != ds) GameState.F_dashSpeed.SetValue(p, newDs);
-            p.gravity = MenuWidgets.FloatField("Gravity", p.gravity);
+            panel.AddFloatField("Jump Force",
+                () => GameState.Player?.jumpForce ?? 0f,
+                v => { if (GameState.Player != null) GameState.Player.jumpForce = v; });
+
+            panel.AddFloatField("Dash Speed",
+                () => GameState.DashSpeed,
+                v => { if (GameState.Player != null) GameState.F_dashSpeed.SetValue(GameState.Player, v); });
+
+            panel.AddFloatField("Gravity",
+                () => GameState.Player?.gravity ?? 0f,
+                v => { if (GameState.Player != null) GameState.Player.gravity = v; });
         }
 
-        private static void DrawCurrency()
+        private static void BuildCurrency(WidgetPanel panel)
         {
-            double cash = globalStats.currencyLookup[globalStats.Currencies.Cash];
-            GUILayout.Label($"Cash: {cash:N0}");
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("+1K")) globalStats.currencyLookup[globalStats.Currencies.Cash] += 1000;
-            if (GUILayout.Button("+1M")) globalStats.currencyLookup[globalStats.Currencies.Cash] += 1000000;
-            if (GUILayout.Button("+1B")) globalStats.currencyLookup[globalStats.Currencies.Cash] += 1000000000;
-            GUILayout.EndHorizontal();
+            panel.AddLabel(() =>
+            {
+                double cash = globalStats.currencyLookup[globalStats.Currencies.Cash];
+                return $"Cash: {cash:N0}";
+            }, UIStyle.FontSizeBody, UIStyle.CurrencyCash);
+
+            panel.AddButtonRow(
+                ("+1K", () => globalStats.currencyLookup[globalStats.Currencies.Cash] += 1000),
+                ("+1M", () => globalStats.currencyLookup[globalStats.Currencies.Cash] += 1000000),
+                ("+1B", () => globalStats.currencyLookup[globalStats.Currencies.Cash] += 1000000000)
+            );
         }
     }
 }

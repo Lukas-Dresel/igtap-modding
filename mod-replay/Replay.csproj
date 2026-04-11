@@ -33,5 +33,9 @@
       <HintPath>$(BepInExDir)/plugins/IGTAPMod.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="IGTAPSpeedrun">
+      <HintPath>$(BepInExDir)/plugins/IGTAPSpeedrun.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 </Project>

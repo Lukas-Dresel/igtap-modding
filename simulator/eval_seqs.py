@@ -36,8 +36,9 @@ def main():
     import argparse as _ap
     _p = _ap.ArgumentParser()
     _p.add_argument("--profile", "-p", default="mysko")
+    _p.add_argument("--course", "-c", default="course1")
     _args, _ = _p.parse_known_args()
-    config = load_config(profile=_args.profile)
+    config = load_config(profile=_args.profile, course=_args.course)
     sim = Simulator(config, seed=42)
 
     print(f"Evaluating {len(data)} sequences @ {n_sims} sims each\n")

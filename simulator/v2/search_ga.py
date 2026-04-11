@@ -160,8 +160,9 @@ if __name__ == "__main__":
     import argparse as _ap
     _p = _ap.ArgumentParser()
     _p.add_argument("--profile", "-p", default="mysko")
+    _p.add_argument("--course", "-c", default="course1")
     _args, _ = _p.parse_known_args()
-    config = load_config(profile=_args.profile)
+    config = load_config(profile=_args.profile, course=_args.course)
 
     ga = GA(config, seed=42, pop_size=300, elite_count=30,
             mutation_rate=0.4, eval_sims=5)

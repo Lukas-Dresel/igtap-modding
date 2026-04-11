@@ -1,0 +1,122 @@
+{
+  "terminal_upgrade": "wallJump",
+  "income_upgrade": "cashPerLoop",
+  "clone_upgrade": "cloneCount",
+  "course": {
+    "number": 1,
+    "base_reward": 1,
+    "tier": 0.0
+  },
+  "clone": {
+    "base_multiplier": 0.1
+  },
+  "gate_positions": {
+    "start": [
+      2492.984176635742,
+      -218.0,
+      0.0
+    ],
+    "end": [
+      2396.2841796875,
+      -164.0,
+      0.0
+    ]
+  },
+  "transitions": {
+    "exit -> wallJump": {
+      "travel_time": 2.0
+    },
+    "exit -> cloneCount": {
+      "travel_time": 2.0
+    },
+    "exit -> cashPerLoop": {
+      "travel_time": 2.0
+    },
+    "exit -> entrance": {
+      "travel_time": 0.75
+    },
+    "wallJump -> wallJump": {
+      "travel_time": 0.75
+    },
+    "wallJump -> cloneCount": {
+      "travel_time": 0.75
+    },
+    "wallJump -> cashPerLoop": {
+      "travel_time": 0.75
+    },
+    "wallJump -> entrance": {
+      "travel_time": 2.5
+    },
+    "cloneCount -> wallJump": {
+      "travel_time": 0.75
+    },
+    "cloneCount -> cloneCount": {
+      "travel_time": 0.75
+    },
+    "cloneCount -> cashPerLoop": {
+      "travel_time": 0.75
+    },
+    "cloneCount -> entrance": {
+      "travel_time": 2.5
+    },
+    "cashPerLoop -> wallJump": {
+      "travel_time": 0.75
+    },
+    "cashPerLoop -> cloneCount": {
+      "travel_time": 0.75
+    },
+    "cashPerLoop -> cashPerLoop": {
+      "travel_time": 0.75
+    },
+    "cashPerLoop -> entrance": {
+      "travel_time": 2.5
+    }
+  },
+  "upgrades": {
+    "wallJump": {
+      "type": "movement",
+      "base_cost": 700.0,
+      "scale_factor": 1.5,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        1357.0,
+        -49.0,
+        0.0
+      ]
+    },
+    "cloneCount": {
+      "type": "local",
+      "base_cost": 8.0,
+      "scale_factor": 1.16,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 35,
+      "visible": true,
+      "active": true,
+      "position": [
+        1547.0,
+        -49.0,
+        0.0
+      ]
+    },
+    "cashPerLoop": {
+      "type": "local",
+      "base_cost": 1.0,
+      "scale_factor": 1.1,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 40,
+      "visible": true,
+      "active": true,
+      "position": [
+        1744.0,
+        -49.0,
+        0.0
+      ]
+    }
+  }
+}

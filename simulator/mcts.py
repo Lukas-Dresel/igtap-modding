@@ -1,7 +1,7 @@
 """MCTS over upgrade purchase sequences.
 
 Each node is a partial sequence of upgrade names.
-Actions: append cashPerLoop, cloneCount, or wallJump (terminal).
+Actions: append any buyable upgrade (terminal upgrade is implicit at end).
 Evaluation: run FixedSequence through the simulator.
 No game state in nodes. No "run" action. Simple.
 """
@@ -25,8 +25,8 @@ class Node:
 
     @property
     def is_terminal(self) -> bool:
-        # Terminal when no more actions possible (both capped)
-        # wallJump is always appended implicitly during evaluation
+        # Terminal when no more actions possible (all capped)
+        # Terminal upgrade is always appended implicitly during evaluation
         return False  # nodes are never terminal; rollout decides when to stop
 
     def ucb1(self, c: float = 1.414) -> float:
@@ -38,14 +38,11 @@ class Node:
 
 
 def get_actions(sequence: list[str], config: SimConfig) -> list[str]:
-    """Only cashPerLoop and cloneCount. wallJump is implicit at end."""
+    """Return buyable upgrades that haven't hit their cap. Terminal upgrade is implicit at end."""
     actions = []
-    cash_count = sequence.count("cashPerLoop")
-    clone_count = sequence.count("cloneCount")
-    if cash_count < config.upgrades["cashPerLoop"].cap:
-        actions.append("cashPerLoop")
-    if clone_count < config.upgrades["cloneCount"].cap:
-        actions.append("cloneCount")
+    for name, upg in config.buyable_upgrades.items():
+        if sequence.count(name) < upg.cap:
+            actions.append(name)
     return actions
 
 
@@ -56,8 +53,8 @@ class MCTS:
         self.sim = Simulator(config, seed=seed)
 
     def evaluate(self, sequence: list[str]) -> float:
-        """Run one simulation of this sequence + wallJump at end."""
-        policy = FixedSequence(sequence + ["wallJump"])
+        """Run one simulation of this sequence + terminal upgrade at end."""
+        policy = FixedSequence(sequence + [self.config.terminal_upgrade])
         state = self.sim.run(policy)
         return state.time
 
@@ -106,7 +103,7 @@ class MCTS:
         return child
 
     def _rollout(self, node: Node) -> tuple[float, list[str]]:
-        """Random completion + evaluate. Randomly decides when to stop buying and go for wallJump."""
+        """Random completion + evaluate. Randomly decides when to stop buying and go for terminal."""
         seq = list(node.sequence)
 
         # Randomly add more upgrades, with increasing chance to stop
@@ -120,7 +117,7 @@ class MCTS:
                 break
             seq.append(self.rng.choice(actions))
 
-        # Evaluate: sequence + wallJump at end
+        # Evaluate: sequence + terminal upgrade at end
         time = self.evaluate(seq)
         return time, seq
 

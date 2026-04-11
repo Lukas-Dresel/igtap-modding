@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from config import SimConfig, load_config
 from state import GameState
-from fsm import State, transition_time
+from fsm import State
 
 
 def clone_income(state: GameState, config: SimConfig, clone_start: float | None,
@@ -34,12 +34,13 @@ def clone_income(state: GameState, config: SimConfig, clone_start: float | None,
 
 
 class SimState:
-    """Full simulation state including FSM position and clone tracking."""
-    __slots__ = ["game", "fsm", "clone_start", "config"]
+    """Full simulation state including FSM phase, current location, clone tracking."""
+    __slots__ = ["game", "fsm", "location", "clone_start", "config"]
 
     def __init__(self, config: SimConfig):
         self.game = GameState(config=config)
         self.fsm = State.AT_ENTRANCE
+        self.location = "entrance"
         self.clone_start = None
         self.config = config
 
@@ -47,6 +48,7 @@ class SimState:
         s = SimState.__new__(SimState)
         s.game = self.game.clone()
         s.fsm = self.fsm
+        s.location = self.location
         s.clone_start = self.clone_start
         s.config = self.config
         return s
@@ -60,9 +62,13 @@ class SimState:
         self.game.cash += ci
         self.game.time += duration
 
+    def _move(self, to_loc: str):
+        self._advance(self.config.travel_time(self.location, to_loc))
+        self.location = to_loc
+
     @property
     def done(self) -> bool:
-        return self.game.has_wall_jump
+        return self.game.has_terminal
 
     def available_actions(self) -> list[str]:
         """What actions can be taken right now."""
@@ -77,21 +83,15 @@ def step(state: SimState, action: str, rng: random.Random) -> None:
     """Execute one action, mutating state in place.
 
     Actions:
-      "run" — transition to entrance if needed, run the course
-      "cashPerLoop" — go to box if needed, buy it
-      "cloneCount" — go to box if needed, buy it
-      "wallJump" — go to box if needed, buy it
+      "run" — return to entrance if needed, run the course
+      <upgrade_name> — travel to that box and buy it
     """
     if action == "run":
-        # Get to entrance
-        if state.fsm == State.AT_EXIT:
-            state._advance(transition_time(State.AT_EXIT, State.AT_ENTRANCE))
-        elif state.fsm == State.AT_BOX:
-            state._advance(transition_time(State.AT_BOX, State.AT_ENTRANCE))
-        # AT_ENTRANCE → RUNNING (0s)
-        state._advance(transition_time(State.AT_ENTRANCE, State.RUNNING))
+        if state.location != "entrance":
+            state._move("entrance")
+        state.fsm = State.AT_ENTRANCE
 
-        # Run the course
+        # Run the course (no travel, just sample run time)
         cfg = state.config
         if rng.random() < cfg.success_rate:
             rt = rng.choice(cfg.success_times)
@@ -102,24 +102,20 @@ def step(state: SimState, action: str, rng: random.Random) -> None:
             state._advance(rt)
 
         state.fsm = State.AT_EXIT
+        state.location = "exit"
 
     else:
-        # Buy action
-        if state.fsm == State.AT_EXIT:
-            state._advance(transition_time(State.AT_EXIT, State.AT_BOX))
-        elif state.fsm == State.AT_BOX:
-            state._advance(transition_time(State.AT_BOX, State.AT_BOX))
-        # else AT_ENTRANCE — shouldn't buy from entrance, but handle gracefully
-        elif state.fsm == State.AT_ENTRANCE:
-            # Can't buy from entrance — treat as invalid, do nothing
-            return
+        # Buy action: travel to the named box
+        if state.fsm == State.AT_ENTRANCE:
+            return  # invalid: can't buy from entrance
+
+        state._move(action)
+        state.fsm = State.AT_BOX
 
         if state.game.can_afford(action):
             state.game.buy_upgrade(action)
             if state.clone_start is None and state.game.clone_count > 0:
                 state.clone_start = state.game.time
-
-        state.fsm = State.AT_BOX
 
 
 def run_sequence(config: SimConfig, actions: list[str], rng: random.Random) -> SimState:

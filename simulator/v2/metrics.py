@@ -14,7 +14,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from config import SimConfig
-from fsm import State, transition_time
+from fsm import State
 from sim import SimState, step, clone_income
 
 
@@ -65,6 +65,7 @@ def simulate_with_metrics(config: SimConfig, genome: list[str], rng: random.Rand
         prev_cash = state.game.cash
         prev_clone_earned = total_clone_earned
         prev_fsm = state.fsm
+        prev_loc = state.location
 
         step(state, action, rng)
 
@@ -88,18 +89,14 @@ def simulate_with_metrics(config: SimConfig, genome: list[str], rng: random.Rand
             buy_gaps.append(state.game.time - last_buy_time)
             last_buy_time = state.game.time
 
-        # Transition overhead: time in FSM transitions (not running course or buying)
+        # Transition overhead: time spent moving (not running the course)
+        # Use the location delta to compute travel cost
         if action == "run":
-            # The run includes transition + course time. Transition is the FSM part.
-            if prev_fsm == State.AT_EXIT:
-                total_transition_time += transition_time(State.AT_EXIT, State.AT_ENTRANCE)
-            elif prev_fsm == State.AT_BOX:
-                total_transition_time += transition_time(State.AT_BOX, State.AT_ENTRANCE)
-        elif action != "run":
-            if prev_fsm == State.AT_EXIT:
-                total_transition_time += transition_time(State.AT_EXIT, State.AT_BOX)
-            elif prev_fsm == State.AT_BOX:
-                total_transition_time += transition_time(State.AT_BOX, State.AT_BOX)
+            if prev_loc != "entrance":
+                total_transition_time += config.travel_time(prev_loc, "entrance")
+        else:
+            # Buy: travel from previous location to the named box
+            total_transition_time += config.travel_time(prev_loc, action)
 
         # Runs while affordable
         if action == "run" and state.game.affordable_upgrades():
@@ -152,7 +149,7 @@ def simulate_with_metrics(config: SimConfig, genome: list[str], rng: random.Rand
 
     features = {
         # Main objective
-        "time_to_walljump": finish_time,
+        "time_to_terminal": finish_time,
 
         # Standard milestones
         "buy_count": float(buy_count),

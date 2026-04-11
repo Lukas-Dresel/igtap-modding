@@ -5,8 +5,6 @@ namespace IGTAPCheckpoint
 {
     public static class CheckpointMenu
     {
-        private static string renameBuffer = "";
-
         public static void Register()
         {
             DebugMenuAPI.RegisterHudItem("checkpoint.slot", 25, () =>
@@ -19,98 +17,120 @@ namespace IGTAPCheckpoint
                 return $"[CP: {slot.Name} {pos}]";
             });
 
-            DebugMenuAPI.RegisterSection("Checkpoints", 50, DrawCheckpoints);
+            DebugMenuAPI.RegisterSection("Checkpoints", 50, BuildCheckpoints);
         }
 
-        private static void DrawCheckpoints()
+        private static void BuildCheckpoints(WidgetPanel panel)
         {
             var data = Plugin.Data;
-            var player = GameState.Player;
 
-            // Active slot header
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("<", GUILayout.Width(25)))
-                data.CycleSlotBack();
-            GUILayout.Label($"Slot {data.ActiveSlotIndex + 1}/{data.Slots.Count}: {data.ActiveSlotName}",
-                GUILayout.ExpandWidth(true));
-            if (GUILayout.Button(">", GUILayout.Width(25)))
-                data.CycleSlot();
-            GUILayout.EndHorizontal();
+            // Active slot navigation
+            panel.AddLabel(() =>
+            {
+                return $"Slot {data.ActiveSlotIndex + 1}/{data.Slots.Count}: {data.ActiveSlotName}";
+            }, UIStyle.FontSizeBody);
 
-            // Active slot position
-            var active = data.ActiveSlot;
-            if (active != null && active.HasPosition)
-                GUILayout.Label($"  Position: ({active.X:F1}, {active.Y:F1})");
-            else
-                GUILayout.Label("  Position: (empty)");
+            panel.AddButtonRow(
+                ("< Prev", () => data.CycleSlotBack()),
+                ("Next >", () => data.CycleSlot())
+            );
+
+            // Position display
+            panel.AddLabel(() =>
+            {
+                var active = data.ActiveSlot;
+                if (active != null && active.HasPosition)
+                    return $"Position: ({active.X:F1}, {active.Y:F1})";
+                return "Position: (empty)";
+            }, UIStyle.FontSizeSmall, UIStyle.TextSecondary);
 
             // Save / Load buttons
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Save Here") && player != null)
-            {
-                Vector3 pos = player.transform.position;
-                data.SaveToSlot(pos.x, pos.y);
-                data.WriteToDisk();
-            }
-            if (GUILayout.Button("Teleport") && player != null && active != null && active.HasPosition)
-            {
-                player.transform.position = new Vector3(active.X, active.Y, 0f);
-                player.respawnPoint = new Vector2(active.X, active.Y);
-            }
-            GUILayout.EndHorizontal();
+            panel.AddButtonRow(
+                ("Save Here", () =>
+                {
+                    var player = GameState.Player;
+                    if (player != null)
+                    {
+                        Vector3 pos = player.transform.position;
+                        data.SaveToSlot(pos.x, pos.y);
+                        data.WriteToDisk();
+                    }
+                }),
+                ("Teleport", () =>
+                {
+                    var player = GameState.Player;
+                    var active = data.ActiveSlot;
+                    if (player != null && active != null && active.HasPosition)
+                    {
+                        player.transform.position = new Vector3(active.X, active.Y, 0f);
+                        player.respawnPoint = new Vector2(active.X, active.Y);
+                    }
+                })
+            );
 
-            GUILayout.Space(5);
+            panel.AddSpacer();
 
             // Override respawn toggle
-            Plugin.OverrideRespawn.Value = GUILayout.Toggle(Plugin.OverrideRespawn.Value,
-                "Override death respawn");
+            panel.AddToggle("Override death respawn",
+                () => Plugin.OverrideRespawn.Value,
+                v => Plugin.OverrideRespawn.Value = v);
 
-            GUILayout.Space(5);
+            panel.AddSeparator();
 
-            // Slot list
-            GUILayout.Label("All Slots:");
-            for (int i = 0; i < data.Slots.Count; i++)
-            {
-                var slot = data.Slots[i];
-                GUILayout.BeginHorizontal();
+            // Dynamic slot list
+            panel.AddLabel(() => "All Slots:", UIStyle.FontSizeSmall, UIStyle.TextSecondary);
+            panel.AddDynamic("slots", BuildSlotList);
 
-                string prefix = i == data.ActiveSlotIndex ? "> " : "  ";
-                string pos = slot.HasPosition ? $"({slot.X:F0}, {slot.Y:F0})" : "(empty)";
-                GUILayout.Label($"{prefix}{slot.Name} {pos}", GUILayout.ExpandWidth(true));
+            panel.AddSpacer();
 
-                if (i != data.ActiveSlotIndex && GUILayout.Button("Set", GUILayout.Width(35)))
-                    data.ActiveSlotIndex = i;
-
-                if (data.Slots.Count > 1 && GUILayout.Button("X", GUILayout.Width(25)))
-                {
-                    data.RemoveSlot(i);
-                    data.WriteToDisk();
-                    break; // list changed, exit loop
-                }
-
-                GUILayout.EndHorizontal();
-            }
-
-            GUILayout.Space(5);
-
-            // Add / Rename
-            GUILayout.BeginHorizontal();
-            if (GUILayout.Button("+ New Slot"))
+            // New slot button
+            panel.AddButton("+ New Slot", () =>
             {
                 data.AddSlot($"Slot {data.Slots.Count + 1}");
                 data.WriteToDisk();
-            }
-            GUILayout.EndHorizontal();
+            });
 
-            GUILayout.BeginHorizontal();
-            renameBuffer = GUILayout.TextField(renameBuffer, GUILayout.Width(120));
-            if (GUILayout.Button("Rename") && !string.IsNullOrEmpty(renameBuffer))
+            // Rename
+            string renameBuffer = "";
+            panel.AddTextField("Rename", () => renameBuffer, v => renameBuffer = v);
+            panel.AddButton("Apply Rename", () =>
             {
-                data.RenameSlot(data.ActiveSlotIndex, renameBuffer);
-                renameBuffer = "";
-                data.WriteToDisk();
+                if (!string.IsNullOrEmpty(renameBuffer))
+                {
+                    data.RenameSlot(data.ActiveSlotIndex, renameBuffer);
+                    renameBuffer = "";
+                    data.WriteToDisk();
+                }
+            });
+        }
+
+        private static void BuildSlotList(WidgetPanel panel)
+        {
+            var data = Plugin.Data;
+            for (int i = 0; i < data.Slots.Count; i++)
+            {
+                int slotIndex = i;
+                var slot = data.Slots[i];
+                string prefix = i == data.ActiveSlotIndex ? "> " : "  ";
+                string pos = slot.HasPosition ? $"({slot.X:F0}, {slot.Y:F0})" : "(empty)";
+
+                panel.AddLabel(() => $"{prefix}{slot.Name} {pos}", UIStyle.FontSizeSmall);
+
+                if (i != data.ActiveSlotIndex)
+                {
+                    panel.AddButtonRow(
+                        ("Set Active", () => data.ActiveSlotIndex = slotIndex),
+                        ("Delete", () =>
+                        {
+                            if (data.Slots.Count > 1)
+                            {
+                                data.RemoveSlot(slotIndex);
+                                data.WriteToDisk();
+                            }
+                        })
+                    );
+                }
             }
-            GUILayout.EndHorizontal();
         }
     }
 }

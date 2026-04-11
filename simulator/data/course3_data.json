@@ -1,0 +1,193 @@
+{
+  "terminal_upgrade": "doubleJump",
+  "income_upgrade": "cashPerLoop",
+  "clone_upgrade": "cloneCount",
+  "course": {
+    "number": 3,
+    "base_reward": 7,
+    "tier": 5.2
+  },
+  "clone": {
+    "base_multiplier": 0.1
+  },
+  "gate_positions": {
+    "start": [
+      9750.2841796875,
+      7045.0001220703125,
+      0.0
+    ],
+    "end": [
+      9505.0,
+      7099.0001220703125,
+      0.0
+    ]
+  },
+  "transitions": {},
+  "upgrades": {
+    "maxCloneFastness": {
+      "type": "global",
+      "base_cost": 3000.0,
+      "scale_factor": 1.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        5558.0,
+        7222.477241516113,
+        0.0
+      ]
+    },
+    "global_cashPerLoop": {
+      "type": "global",
+      "base_cost": 0.0,
+      "scale_factor": 1.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        8622.0,
+        5736.000068664551,
+        0.0
+      ]
+    },
+    "fastCloneChance": {
+      "type": "local",
+      "base_cost": 40.0,
+      "scale_factor": 1.5,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 12,
+      "visible": true,
+      "active": true,
+      "position": [
+        8764.0,
+        7222.477241516113,
+        0.0
+      ]
+    },
+    "global_cashPerLoop_2": {
+      "type": "global",
+      "base_cost": 2000.0,
+      "scale_factor": 3.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 3,
+      "visible": true,
+      "active": true,
+      "position": [
+        8384.0,
+        7222.477241516113,
+        0.0
+      ]
+    },
+    "maxCloneFastness_2": {
+      "type": "global",
+      "base_cost": 0.0,
+      "scale_factor": 1.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        11200.10009765625,
+        7521.477241516113,
+        0.0
+      ]
+    },
+    "doubleJump": {
+      "type": "movement",
+      "base_cost": 3500000.0,
+      "scale_factor": 1.5,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 15,
+      "visible": true,
+      "active": true,
+      "position": [
+        8084.0,
+        7222.477241516113,
+        0.0
+      ]
+    },
+    "unlockPrestige": {
+      "type": "global",
+      "base_cost": 70000.0,
+      "scale_factor": 1.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        6794.0,
+        7222.477241516113,
+        0.0
+      ]
+    },
+    "global_bigCloneChance": {
+      "type": "global",
+      "base_cost": 0.0,
+      "scale_factor": 1.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 1,
+      "visible": true,
+      "active": true,
+      "position": [
+        6350.0,
+        6245.477241516113,
+        0.0
+      ]
+    },
+    "cloneMult": {
+      "type": "local",
+      "base_cost": 80.0,
+      "scale_factor": 2.0,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 12,
+      "visible": true,
+      "active": true,
+      "position": [
+        8594.0,
+        7222.477241516113,
+        0.0
+      ]
+    },
+    "cloneCount": {
+      "type": "local",
+      "base_cost": 25.0,
+      "scale_factor": 1.28,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 40,
+      "visible": true,
+      "active": true,
+      "position": [
+        8934.0,
+        7222.477241516113,
+        0.0
+      ]
+    },
+    "cashPerLoop": {
+      "type": "local",
+      "base_cost": 10.0,
+      "scale_factor": 1.22,
+      "power_scale_factor": 1.0,
+      "add_factor": 0.0,
+      "cap": 60,
+      "visible": true,
+      "active": true,
+      "position": [
+        9104.0,
+        7222.477241516113,
+        0.0
+      ]
+    }
+  }
+}

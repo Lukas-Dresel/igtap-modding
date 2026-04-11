@@ -143,7 +143,7 @@ def run_simsearch(config, jsonl):
         t = result["mean"]
         if t < best_time:
             best_time = t
-            best_seq = seq_to_names(seq)
+            best_seq = seq_to_names(seq, config)
             write_candidate(jsonl, "simsearch", best_seq, best_time)
     print(f"  [SimSearch] done: {summarize(best_seq)} ({best_time:.1f}s)")
 
@@ -182,13 +182,14 @@ def main():
     parser.add_argument("--novelty-gens", type=int, default=200)
     parser.add_argument("--mcts-iters", type=int, default=50000)
     parser.add_argument("--validate-sims", type=int, default=2000)
+    parser.add_argument("--course", "-c", default="course1")
     parser.add_argument("--output", "-o")
     parser.add_argument("--skip", nargs="*", default=[])
     args = parser.parse_args()
 
-    config = load_config(profile=args.profile)
+    config = load_config(profile=args.profile, course=args.course)
     base = Path(__file__).parent
-    jsonl_path = str(base / "profiles" / args.profile / "candidates.jsonl")
+    jsonl_path = str(base / "profiles" / args.profile / args.course / "candidates.jsonl")
 
     # Clear previous candidates
     open(jsonl_path, "w").close()
@@ -255,7 +256,7 @@ def main():
         print(f"{i+1:<5} {r['mean']:>8.1f} {r['median']:>8.1f} {r['p10']:>8.1f} {r['p90']:>8.1f}  {r['buys']:>4}  {r['algo']:<15} {r['summary']}")
 
     # Save
-    out_path = args.output or str(base / "profiles" / args.profile / "results.json")
+    out_path = args.output or str(base / "profiles" / args.profile / args.course / "results.json")
     output = {
         "profile": args.profile,
         "config": {
