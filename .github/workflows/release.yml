@@ -144,4 +144,4 @@ jobs:
 
           gh release create "$TAG" "${ASSETS[@]}" \
             --title "IGTAP Mods v${VERSION}" \
-            --generate-notes
+            --notes-file release-staging/README.md
