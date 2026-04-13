@@ -51,67 +51,45 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           sed -i "s|<LangVersion>latest</LangVersion>|<LangVersion>latest</LangVersion>\n    <Version>$VERSION</Version>|" Directory.Build.props
 
-      # ── Tier 0: mods with no cross-mod dependencies ──
-      - name: 'Build Tier 0: core + independent mods'
+      - name: Build all mods
         run: |
           PROPS="-p:ManagedDir=$PWD/ci-deps/managed -p:BepInExDir=$PWD/ci-deps/bepinex"
 
-          echo "=== Building IGTAPMod ==="
-          dotnet build -c Release mod/IGTAPMod.csproj $PROPS
+          build_if_exists() {
+            local csproj="$1"
+            if [ -f "$csproj" ]; then
+              echo "=== Building $csproj ==="
+              dotnet build -c Release "$csproj" $PROPS
+            else
+              echo "=== Skipping $csproj (not found) ==="
+            fi
+          }
 
-          echo "=== Building FixedTimestep ==="
-          dotnet build -c Release mod-fixedtimestep/FixedTimestep.csproj $PROPS
+          # Tier 0: core + mods with no cross-mod dependencies
+          build_if_exists mod/IGTAPMod.csproj
+          build_if_exists mod-fixedtimestep/FixedTimestep.csproj
+          build_if_exists mod-simulator/SimDataExtractor.csproj
 
-          echo "=== Building Undemo ==="
-          dotnet build -c Release mod-undemo/Undemo.csproj $PROPS
-
-          echo "=== Building SimDataExtractor ==="
-          dotnet build -c Release mod-simulator/SimDataExtractor.csproj $PROPS
-
-      - name: Stage Tier 0 outputs
-        run: |
+          # Stage core output for dependent mods
           cp mod/bin/Release/netstandard2.1/IGTAPMod.dll ci-deps/bepinex/plugins/
 
-      # ── Tier 1: mods depending on IGTAPMod ──
-      - name: 'Build Tier 1: mods depending on core'
-        run: |
-          PROPS="-p:ManagedDir=$PWD/ci-deps/managed -p:BepInExDir=$PWD/ci-deps/bepinex"
+          # Tier 1: mods depending on IGTAPMod
+          build_if_exists mod-freeplay/Freeplay.csproj
+          build_if_exists mod-dashplus/DashPlus.csproj
+          build_if_exists mod-inputviz/InputViz.csproj
+          build_if_exists mod-minimap/Minimap.csproj
+          build_if_exists mod-checkpoint/Checkpoint.csproj
+          build_if_exists mod-randomizer/Randomizer.csproj
+          build_if_exists mod-echo/Echo.csproj
+          build_if_exists mod-speedrun/SpeedrunTimer.csproj
 
-          echo "=== Building Freeplay ==="
-          dotnet build -c Release mod-freeplay/Freeplay.csproj $PROPS
+          # Stage speedrun output for replay
+          if [ -f mod-speedrun/bin/Release/netstandard2.1/IGTAPSpeedrun.dll ]; then
+            cp mod-speedrun/bin/Release/netstandard2.1/IGTAPSpeedrun.dll ci-deps/bepinex/plugins/
+          fi
 
-          echo "=== Building DashPlus ==="
-          dotnet build -c Release mod-dashplus/DashPlus.csproj $PROPS
-
-          echo "=== Building InputViz ==="
-          dotnet build -c Release mod-inputviz/InputViz.csproj $PROPS
-
-          echo "=== Building Minimap ==="
-          dotnet build -c Release mod-minimap/Minimap.csproj $PROPS
-
-          echo "=== Building Checkpoint ==="
-          dotnet build -c Release mod-checkpoint/Checkpoint.csproj $PROPS
-
-          echo "=== Building Randomizer ==="
-          dotnet build -c Release mod-randomizer/Randomizer.csproj $PROPS
-
-          echo "=== Building Echo ==="
-          dotnet build -c Release mod-echo/Echo.csproj $PROPS
-
-          echo "=== Building SpeedrunTimer ==="
-          dotnet build -c Release mod-speedrun/SpeedrunTimer.csproj $PROPS
-
-      - name: Stage Tier 1 outputs
-        run: |
-          cp mod-speedrun/bin/Release/netstandard2.1/IGTAPSpeedrun.dll ci-deps/bepinex/plugins/
-
-      # ── Tier 2: mods depending on other mod outputs ──
-      - name: 'Build Tier 2: mods with cross-mod dependencies'
-        run: |
-          PROPS="-p:ManagedDir=$PWD/ci-deps/managed -p:BepInExDir=$PWD/ci-deps/bepinex"
-
-          echo "=== Building Replay ==="
-          dotnet build -c Release mod-replay/Replay.csproj $PROPS
+          # Tier 2: mods with cross-mod dependencies
+          build_if_exists mod-replay/Replay.csproj
 
       # ── Collect & package ──
       - name: Collect artifacts
