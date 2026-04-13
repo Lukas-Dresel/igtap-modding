@@ -6,6 +6,11 @@ mod*/obj/
 __pycache__
 *.pyc
 
+# CI dependency artifacts
+ci-deps/
+ci-deps.zip
+release-staging/
+
 # Decompilation-derived data
 decomp/output/
 Assembly-CSharp.decompiled.cs

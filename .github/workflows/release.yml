@@ -1,0 +1,169 @@
+name: Build & Release Mods
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 1.2.3)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Download CI dependencies
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download ci-deps -p 'ci-deps.zip' -R "${{ github.repository }}"
+          mkdir -p ci-deps
+          unzip -o ci-deps.zip -d ci-deps
+          mkdir -p ci-deps/bepinex/plugins
+          rm ci-deps.zip
+
+      - name: Inject version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i "s|<LangVersion>latest</LangVersion>|<LangVersion>latest</LangVersion>\n    <Version>$VERSION</Version>|" Directory.Build.props
+
+      # ── Tier 0: mods with no cross-mod dependencies ──
+      - name: 'Build Tier 0: core + independent mods'
+        run: |
+          PROPS="-p:ManagedDir=$PWD/ci-deps/managed -p:BepInExDir=$PWD/ci-deps/bepinex"
+
+          echo "=== Building IGTAPMod ==="
+          dotnet build -c Release mod/IGTAPMod.csproj $PROPS
+
+          echo "=== Building FixedTimestep ==="
+          dotnet build -c Release mod-fixedtimestep/FixedTimestep.csproj $PROPS
+
+          echo "=== Building Undemo ==="
+          dotnet build -c Release mod-undemo/Undemo.csproj $PROPS
+
+          echo "=== Building SimDataExtractor ==="
+          dotnet build -c Release mod-simulator/SimDataExtractor.csproj $PROPS
+
+      - name: Stage Tier 0 outputs
+        run: |
+          cp mod/bin/Release/netstandard2.1/IGTAPMod.dll ci-deps/bepinex/plugins/
+
+      # ── Tier 1: mods depending on IGTAPMod ──
+      - name: 'Build Tier 1: mods depending on core'
+        run: |
+          PROPS="-p:ManagedDir=$PWD/ci-deps/managed -p:BepInExDir=$PWD/ci-deps/bepinex"
+
+          echo "=== Building Freeplay ==="
+          dotnet build -c Release mod-freeplay/Freeplay.csproj $PROPS
+
+          echo "=== Building DashPlus ==="
+          dotnet build -c Release mod-dashplus/DashPlus.csproj $PROPS
+
+          echo "=== Building InputViz ==="
+          dotnet build -c Release mod-inputviz/InputViz.csproj $PROPS
+
+          echo "=== Building Minimap ==="
+          dotnet build -c Release mod-minimap/Minimap.csproj $PROPS
+
+          echo "=== Building Checkpoint ==="
+          dotnet build -c Release mod-checkpoint/Checkpoint.csproj $PROPS
+
+          echo "=== Building Randomizer ==="
+          dotnet build -c Release mod-randomizer/Randomizer.csproj $PROPS
+
+          echo "=== Building Echo ==="
+          dotnet build -c Release mod-echo/Echo.csproj $PROPS
+
+          echo "=== Building SpeedrunTimer ==="
+          dotnet build -c Release mod-speedrun/SpeedrunTimer.csproj $PROPS
+
+      - name: Stage Tier 1 outputs
+        run: |
+          cp mod-speedrun/bin/Release/netstandard2.1/IGTAPSpeedrun.dll ci-deps/bepinex/plugins/
+
+      # ── Tier 2: mods depending on other mod outputs ──
+      - name: 'Build Tier 2: mods with cross-mod dependencies'
+        run: |
+          PROPS="-p:ManagedDir=$PWD/ci-deps/managed -p:BepInExDir=$PWD/ci-deps/bepinex"
+
+          echo "=== Building Replay ==="
+          dotnet build -c Release mod-replay/Replay.csproj $PROPS
+
+      # ── Collect & package ──
+      - name: Collect artifacts
+        run: |
+          mkdir -p release-staging
+          for mod_dir in mod*/; do
+            case "$(basename "$mod_dir")" in *IMPORTED*) continue ;; esac
+            for dll in "$mod_dir"/bin/Release/netstandard2.1/*.dll; do
+              [ -f "$dll" ] || continue
+              cp "$dll" release-staging/
+            done
+          done
+          echo "Collected DLLs:"
+          ls -la release-staging/
+
+      - name: Generate README
+        run: |
+          chmod +x scripts/generate-readme.sh
+          scripts/generate-readme.sh "${{ steps.version.outputs.version }}" > release-staging/README.md
+
+      - name: Copy install script
+        run: |
+          cp scripts/install-release.sh release-staging/
+          chmod +x release-staging/install-release.sh
+
+      - name: Create zip bundle
+        run: |
+          cd release-staging
+          zip -r "../igtap-mods-v${{ steps.version.outputs.version }}.zip" .
+          cd ..
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          # Create tag if manual dispatch
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+          # Build asset args: zip bundle + individual DLLs + install script + README
+          ASSETS=("igtap-mods-v${VERSION}.zip")
+          for dll in release-staging/*.dll; do
+            ASSETS+=("$dll")
+          done
+          ASSETS+=("release-staging/install-release.sh")
+          ASSETS+=("release-staging/README.md")
+
+          gh release create "$TAG" "${ASSETS[@]}" \
+            --title "IGTAP Mods v${VERSION}" \
+            --generate-notes

@@ -33,6 +33,8 @@
       <HintPath>$(BepInExDir)/plugins/IGTAPMod.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Compile-time only; runtime dependency is soft (BepInDependency.SoftDependency).
+         See SpeedrunBridge.cs — all type references use NoInlining to avoid loading if absent. -->
     <Reference Include="IGTAPSpeedrun">
       <HintPath>$(BepInExDir)/plugins/IGTAPSpeedrun.dll</HintPath>
       <Private>false</Private>

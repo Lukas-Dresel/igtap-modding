@@ -8,8 +8,8 @@
   <!-- Resolve game paths -->
   <PropertyGroup>
     <GameDir Condition="'$(GameDir)' == ''">$(HOME)/.steam/steam/steamapps/common/IGTAP an Incremental Game That's Also a Platformer Demo</GameDir>
-    <BepInExDir>$(GameDir)/BepInEx</BepInExDir>
-    <ManagedDir>$(GameDir)/IGTAP_Data/Managed</ManagedDir>
+    <BepInExDir Condition="'$(BepInExDir)' == ''">$(GameDir)/BepInEx</BepInExDir>
+    <ManagedDir Condition="'$(ManagedDir)' == ''">$(GameDir)/IGTAP_Data/Managed</ManagedDir>
   </PropertyGroup>
 
   <!-- BepInEx core (almost every mod needs these) -->
