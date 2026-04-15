@@ -8,8 +8,8 @@ from simulator import Simulator
 from state import GameState
 from policy import (
     SaveForWallJump, CheapestFirst, ClonesFirst, CashFirst, GreedyROI, RandomPolicy,
-    PreTomjon6, Tomjon6, Lukas, MCTSDistilledV1, MCTSDistilledV2, MCTSDistilledV3, MCTSDistilledV4, MCTSDistilledV5, MCTSDistilledV6, MCTSDistilledV7, MCTSDistilledV8,
-    Z3OptimalV1, SimSearchV1, MyskoSub15, GraphFullV1, MyskoFast1, MyskoFast1Variant,
+    PreTomjon6, Tomjon6, Lukas, MCTSDistilledV1, MCTSDistilledV2, MCTSDistilledV3, MCTSDistilledV4, MCTSDistilledV5, MCTSDistilledV6, MCTSDistilledV7, MCTSDistilledV8, MCTSDistilledV9,
+    Z3OptimalV1, SimSearchV1, MyskoSub15, GraphFullV1, MyskoFast1, MyskoFast1Variant, HonululuFast1,
     FixedSequence, CashThenClones,
 )
 
@@ -38,18 +38,20 @@ ALL_POLICIES = {
     "v6": lambda: MCTSDistilledV6(),
     "v7": lambda: MCTSDistilledV7(),
     "v8": lambda: MCTSDistilledV8(),
+    "v9": lambda: MCTSDistilledV9(),
     "z3v1": lambda: Z3OptimalV1(),
     "ss1": lambda: SimSearchV1(),
     "mysko_sub_15": lambda: MyskoSub15(),
     "gfv1": lambda: GraphFullV1(),
     "myskofast1": lambda: MyskoFast1(),
     "myskofast1v": lambda: MyskoFast1Variant(),
+    "honululufast1": lambda: HonululuFast1(),
     "ct1_5": lambda: CashThenClones(cash_first=1, clone_target=5),
     "ct3_5": lambda: CashThenClones(cash_first=3, clone_target=5),
 }
 
 # Top 5 from previous runs
-TOP5 = ["ss1", "z3v1", "v8", "v7", "v6"]
+TOP5 = ["ss1", "z3v1", "v8", "v7", "v6", "v9"]
 
 
 def compare_policies(n_sims: int = 1000, seed: int = 42, mcts_iters: int = 0, only: str = None,

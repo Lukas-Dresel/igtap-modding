@@ -52,11 +52,27 @@ namespace IGTAPSpeedrun
         {
             allProfiles = LoadAllWithAutoDetect();
             if (_startWithAutoDetect)
+            {
                 LoadProfile(BuildAutoDetectProfile());
-            else if (allProfiles.Count > 0)
-                LoadProfile(allProfiles[0]);
+            }
             else
-                LoadProfile(ProfileManager.GetDefault());
+            {
+                // Default to the last-used profile (per Plugin.LastProfileName) if it still exists.
+                // Empty LastProfileName means auto-detect mode, which is allProfiles[0].
+                SpeedrunProfile initial = null;
+                string lastName = Plugin.LastProfileName.Value;
+                if (!string.IsNullOrEmpty(lastName))
+                {
+                    foreach (var p in allProfiles)
+                        if (p.name == lastName) { initial = p; break; }
+                }
+                if (initial == null && allProfiles.Count > 0)
+                    initial = allProfiles[0];
+                if (initial != null)
+                    LoadProfile(initial);
+                else
+                    LoadProfile(ProfileManager.GetDefault());
+            }
 
             canvas = GameUI.CreateScreenCanvas("SpeedrunEditorCanvas", 200);
 
@@ -83,7 +99,10 @@ namespace IGTAPSpeedrun
 
             // ---- Profile selector row: dropdown + name input + new + delete ----
             var selectorRow = GameUI.CreatePanel(panel.transform, "SelectorRow", Color.clear);
-            GameUI.SetSize(selectorRow, height: 44);
+            var selectorRowLe = selectorRow.gameObject.AddComponent<LayoutElement>();
+            selectorRowLe.preferredHeight = 44;
+            selectorRowLe.flexibleHeight = 0;
+            selectorRowLe.layoutPriority = 2;
             var selectorLayout = GameUI.AddHorizontalLayout(selectorRow, 8, 0);
             selectorLayout.childAlignment = TextAnchor.MiddleLeft;
             selectorLayout.childForceExpandWidth = false;
@@ -129,12 +148,12 @@ namespace IGTAPSpeedrun
             nameInputLe.preferredHeight = 36;
             nameInputLe.flexibleWidth = 1;
 
-            var newBtn = theme.CloneButton(selectorRow.transform, "New", OnNew);
+            var newBtn = theme.CloneButton(selectorRow.transform, "New", OnNew, textOnly: true);
             var newBtnLe = newBtn.gameObject.AddComponent<LayoutElement>();
             newBtnLe.preferredWidth = 90;
             newBtnLe.preferredHeight = 36;
 
-            var delBtn = theme.CloneButton(selectorRow.transform, "Delete", OnDelete);
+            var delBtn = theme.CloneButton(selectorRow.transform, "Delete", OnDelete, textOnly: true);
             var delBtnLe = delBtn.gameObject.AddComponent<LayoutElement>();
             delBtnLe.preferredWidth = 90;
             delBtnLe.preferredHeight = 36;
@@ -180,12 +199,12 @@ namespace IGTAPSpeedrun
             var spacerTop = GameUI.CreatePanel(arrowPanel.transform, "SpacerTop", Color.clear);
             GameUI.SetSize(spacerTop, height: 60);
 
-            var addBtn = theme.CloneButton(arrowPanel.transform, "→", OnAdd);
+            var addBtn = theme.CloneButton(arrowPanel.transform, "→", OnAdd, textOnly: true, fontSize: 26f);
             var addBtnLe = addBtn.gameObject.AddComponent<LayoutElement>();
             addBtnLe.preferredWidth = 60;
             addBtnLe.preferredHeight = 40;
 
-            var removeBtn = theme.CloneButton(arrowPanel.transform, "←", OnRemove);
+            var removeBtn = theme.CloneButton(arrowPanel.transform, "←", OnRemove, textOnly: true, fontSize: 26f);
             var removeBtnLe = removeBtn.gameObject.AddComponent<LayoutElement>();
             removeBtnLe.preferredWidth = 60;
             removeBtnLe.preferredHeight = 40;
@@ -193,12 +212,12 @@ namespace IGTAPSpeedrun
             var spacerMid = GameUI.CreatePanel(arrowPanel.transform, "SpacerMid", Color.clear);
             GameUI.SetSize(spacerMid, height: 12);
 
-            var upBtn = theme.CloneButton(arrowPanel.transform, "↑", OnMoveUp);
+            var upBtn = theme.CloneButton(arrowPanel.transform, "↑", OnMoveUp, textOnly: true, fontSize: 26f);
             var upBtnLe = upBtn.gameObject.AddComponent<LayoutElement>();
             upBtnLe.preferredWidth = 60;
             upBtnLe.preferredHeight = 40;
 
-            var downBtn = theme.CloneButton(arrowPanel.transform, "↓", OnMoveDown);
+            var downBtn = theme.CloneButton(arrowPanel.transform, "↓", OnMoveDown, textOnly: true, fontSize: 26f);
             var downBtnLe = downBtn.gameObject.AddComponent<LayoutElement>();
             downBtnLe.preferredWidth = 60;
             downBtnLe.preferredHeight = 40;
@@ -211,21 +230,26 @@ namespace IGTAPSpeedrun
             rightLe.flexibleHeight = 1;
             var rightLayout = GameUI.AddVerticalLayout(rightPanel, 6, 10);
 
-            var rightLabel = GameUI.CreateText(rightPanel.transform, "SelectedLabel", "Selected (in order)",
-                UIStyle.FontSizeBody, UIStyle.TextSecondary, TextAlignmentOptions.Center);
-            GameUI.SetSize(rightLabel.rectTransform, height: 26);
-
-            // Header row above the list: column titles for Starts/Ends checkboxes
-            var headerRow = GameUI.CreatePanel(rightPanel.transform, "ColHeader", Color.clear);
-            GameUI.SetSize(headerRow, height: 22);
+            // Combined title + column header row: "Selected (in order)" on the left,
+            // "Starts" and "Ends" column labels aligned above the toggle columns.
+            // NOTE: we set LE.layoutPriority=2 to beat the HorizontalLayoutGroup (default prio=1).
+            // The HLG on this row implements ILayoutElement and reports its own preferredHeight
+            // based on the TMP children. With narrow initial width, TMP wraps and returns a huge
+            // preferredHeight (~196), and the parent VLG picks the max of (our LE, HLG), so the
+            // LE gets ignored unless its priority is higher.
+            var headerRow = GameUI.CreatePanel(rightPanel.transform, "HeaderRow", Color.clear);
+            var headerRowLe = headerRow.gameObject.AddComponent<LayoutElement>();
+            headerRowLe.preferredHeight = 22;
+            headerRowLe.flexibleHeight = 0;
+            headerRowLe.layoutPriority = 2;
             var headerLayout = GameUI.AddHorizontalLayout(headerRow, 4, 0);
             headerLayout.childAlignment = TextAnchor.MiddleLeft;
             headerLayout.childForceExpandWidth = false;
             headerLayout.childControlWidth = true;
             headerLayout.childControlHeight = true;
 
-            var hdrName = GameUI.CreateText(headerRow.transform, "HdrName", "Split",
-                UIStyle.FontSizeSmall, UIStyle.TextMuted, TextAlignmentOptions.MidlineLeft);
+            var hdrName = GameUI.CreateText(headerRow.transform, "HdrName", "Selected (in order)",
+                UIStyle.FontSizeSmall, UIStyle.TextSecondary, TextAlignmentOptions.MidlineLeft);
             var hdrNameLe = hdrName.gameObject.AddComponent<LayoutElement>();
             hdrNameLe.flexibleWidth = 1;
 
@@ -249,23 +273,58 @@ namespace IGTAPSpeedrun
 
             // ---- Bottom button row ----
             var bottomRow = GameUI.CreatePanel(panel.transform, "BottomRow", Color.clear);
-            GameUI.SetSize(bottomRow, height: 48);
+            var bottomRowLe = bottomRow.gameObject.AddComponent<LayoutElement>();
+            bottomRowLe.preferredHeight = 48;
+            bottomRowLe.flexibleHeight = 0;
+            bottomRowLe.layoutPriority = 2;
             var bottomLayout = GameUI.AddHorizontalLayout(bottomRow, 16, 0);
             bottomLayout.childAlignment = TextAnchor.MiddleCenter;
             bottomLayout.childForceExpandWidth = false;
 
-            var saveBtn = theme.CloneButton(bottomRow.transform, "Save", OnSave);
+            var saveBtn = theme.CloneButton(bottomRow.transform, "Save", OnSave, textOnly: true);
             var saveBtnLe = saveBtn.gameObject.AddComponent<LayoutElement>();
             saveBtnLe.preferredWidth = 180;
             saveBtnLe.preferredHeight = 44;
 
-            var cancelBtn = theme.CloneButton(bottomRow.transform, "Close", OnClose);
+            var cancelBtn = theme.CloneButton(bottomRow.transform, "Close", OnClose, textOnly: true);
             var cancelBtnLe = cancelBtn.gameObject.AddComponent<LayoutElement>();
             cancelBtnLe.preferredWidth = 180;
             cancelBtnLe.preferredHeight = 44;
 
             GameUI.MakeDraggable(panel);
             RebuildLists();
+
+            // DIAGNOSTIC: dump all major layout containers one frame later so we can see what
+            // the actual rendered sizes are and find the "too big" header.
+            StartCoroutine(DiagDumpLayoutNextFrame());
+        }
+
+        private System.Collections.IEnumerator DiagDumpLayoutNextFrame()
+        {
+            yield return null;
+            if (canvas == null) yield break;
+            Plugin.Log.LogInfo("[ProfileEditor] === Layout dump ===");
+            DumpRect("EditorPanel", canvas.transform.Find("EditorPanel") as RectTransform);
+            DumpRect("SelectorRow", canvas.transform.Find("EditorPanel/SelectorRow") as RectTransform);
+            DumpRect("ShuttleRow", canvas.transform.Find("EditorPanel/ShuttleRow") as RectTransform);
+            DumpRect("AvailablePanel", canvas.transform.Find("EditorPanel/ShuttleRow/AvailablePanel") as RectTransform);
+            DumpRect("ArrowPanel", canvas.transform.Find("EditorPanel/ShuttleRow/ArrowPanel") as RectTransform);
+            DumpRect("SelectedPanel", canvas.transform.Find("EditorPanel/ShuttleRow/SelectedPanel") as RectTransform);
+            DumpRect("SelectedPanel/HeaderRow", canvas.transform.Find("EditorPanel/ShuttleRow/SelectedPanel/HeaderRow") as RectTransform);
+            DumpRect("SelectedPanel/SelectedScroll", canvas.transform.Find("EditorPanel/ShuttleRow/SelectedPanel/SelectedScroll") as RectTransform);
+            DumpRect("BottomRow", canvas.transform.Find("EditorPanel/BottomRow") as RectTransform);
+        }
+
+        private static void DumpRect(string label, RectTransform rt)
+        {
+            if (rt == null)
+            {
+                Plugin.Log.LogInfo($"  [{label}] null");
+                return;
+            }
+            var le = rt.GetComponent<LayoutElement>();
+            string leInfo = le != null ? $" LE(prefH={le.preferredHeight}, minH={le.minHeight}, flexH={le.flexibleHeight})" : " (no LE)";
+            Plugin.Log.LogInfo($"  [{label}] rect={rt.rect} sizeDelta={rt.sizeDelta}{leInfo}");
         }
 
         private void RefreshProfileDropdown()
@@ -342,14 +401,14 @@ namespace IGTAPSpeedrun
 
                 if (isAvailable)
                 {
-                    // Available list: simple click-to-select button using game theme.
+                    // Available list: simple click-to-select button using game theme (text-only).
                     var btn = theme.CloneButton(content.transform, item.label,
                         () =>
                         {
                             availableSelection = capturedIdx;
                             selectedSelection = -1;
                             UpdateListHighlights();
-                        });
+                        }, textOnly: true);
                     var btnLe = btn.gameObject.AddComponent<LayoutElement>();
                     btnLe.preferredHeight = 32;
                     btnLe.flexibleWidth = 1;
@@ -380,7 +439,7 @@ namespace IGTAPSpeedrun
                             selectedSelection = capturedIdx;
                             availableSelection = -1;
                             UpdateListHighlights();
-                        });
+                        }, textOnly: true);
                     var btnLe = btn.gameObject.AddComponent<LayoutElement>();
                     btnLe.flexibleWidth = 1;
                     btnLe.minWidth = 60;
@@ -485,11 +544,27 @@ namespace IGTAPSpeedrun
 
         private void OnNew()
         {
+            Plugin.Log.LogInfo("[ProfileEditor] OnNew clicked");
+
+            // Generate a unique name so clicking New repeatedly doesn't collide with
+            // existing profiles in the in-memory list or the dropdown.
+            string baseName = "New Profile";
+            string name = baseName;
+            int n = 2;
+            while (allProfiles.Any(p => p.name == name))
+                name = $"{baseName} {n++}";
+
             var profile = new SpeedrunProfile
             {
-                name = "New Profile",
+                name = name,
                 splits = new List<SplitDef>()
             };
+
+            // Add it to the in-memory list so RefreshProfileDropdown finds the new entry
+            // and the dropdown shows it selected. The profile isn't persisted to disk
+            // until the user clicks Save.
+            allProfiles.Add(profile);
+
             LoadProfile(profile);
             RebuildLists();
         }

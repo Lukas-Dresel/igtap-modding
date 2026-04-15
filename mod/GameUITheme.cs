@@ -421,6 +421,38 @@ namespace IGTAPMod
                 }
 
                 Plugin.Log.LogInfo($"[CloneDropdown] '{name}' after ClearOptions: dd.options.Count={dd.options.Count} captionText='{dd.captionText?.text}'");
+
+                // Enumerate ALL TMP_Text descendants so we can find any with leftover baked-in
+                // text from the original game clone (e.g. "Windowed", "Fullscreen", etc.).
+                var allTmps = go.GetComponentsInChildren<TMP_Text>(includeInactive: true);
+                foreach (var t in allTmps)
+                {
+                    string path = GetPath(t.transform, go.transform);
+                    Plugin.Log.LogInfo($"[CloneDropdown] '{name}' TMP at '{path}' text='{t.text}' active={t.gameObject.activeSelf}");
+
+                    // Force-clear any TMP that isn't the captionText — the captionText is managed
+                    // by TMP_Dropdown.RefreshShownValue; anything else is leftover game data.
+                    if (t != dd.captionText)
+                        t.text = "";
+                }
+
+                // Dump and destroy any non-standard MonoBehaviour in the hierarchy. Something
+                // (likely a LocalizeStringEvent or a game-specific settings binder) is overwriting
+                // our captionText back to the original "Fullscreen" value after we set it.
+                var allBehaviours = go.GetComponentsInChildren<MonoBehaviour>(includeInactive: true);
+                foreach (var b in allBehaviours)
+                {
+                    if (b == null) continue;
+                    string btype = b.GetType().FullName;
+                    // Keep standard Unity UI + TMPro + Layout components
+                    if (btype.StartsWith("UnityEngine.UI.") ||
+                        btype.StartsWith("TMPro.") ||
+                        btype.StartsWith("UnityEngine.EventSystems."))
+                        continue;
+                    string bpath = GetPath(b.transform, go.transform);
+                    Plugin.Log.LogInfo($"[CloneDropdown] '{name}' destroying non-standard MonoBehaviour at '{bpath}': {btype}");
+                    DestroyImmediate(b);
+                }
             }
 
             // Strip stray children. The cloned game dropdown carries an extra "Text (TMP) (1)"
@@ -479,15 +511,16 @@ namespace IGTAPMod
 
             if (textOnly)
             {
-                // Subtle text-only style: hide the background, use text tinting for hover feedback.
-                // The cloned game Close button already has Image disabled and targetGraphic=Text so
-                // the existing colors block tints the text directly. Override the normal color to
-                // white so the text reads white in idle, then highlights in the game's accent on hover.
+                // Text-only style matching the game's visual convention: white text = reading,
+                // orange text = clickable. Hide the background and tint the text orange in normal
+                // state so it reads as interactive without a filled button background.
+                // The cloned game Close button already has Image disabled and targetGraphic=Text,
+                // so the Button's colors block tints the text directly.
                 if (rootImg != null) rootImg.enabled = false;
                 if (button != null)
                 {
                     var c = button.colors;
-                    c.normalColor = Color.white;
+                    c.normalColor = UIStyle.ButtonNormal; // orange (game convention for clickable)
                     button.colors = c;
                 }
             }
@@ -517,13 +550,15 @@ namespace IGTAPMod
             // Reset the text RectTransform to actually fill the button — the cloned Close button's
             // text has sizeDelta=(-70, 0) meaning "70px narrower than parent" which renders fine for the
             // original ~300px-wide button but breaks when the button is shrunk (e.g. 32px arrow buttons).
-            // For filled buttons we set white text so it reads on the orange background; for textOnly
-            // buttons we leave text.color alone since the Button component tints it via state colors.
+            // Always force the text color to white — the Button component tints the targetGraphic by
+            // multiplying its color with the state color, so white base * orange state = orange text.
+            // If we leave the cloned color (dark gray ~0.196), the tint becomes near-black and is
+            // invisible on the mod's dark panel background.
             var texts = go.GetComponentsInChildren<TMP_Text>(true);
             foreach (var t in texts)
             {
                 t.text = label;
-                if (!textOnly) t.color = Color.white;
+                t.color = Color.white;
                 t.alignment = TMPro.TextAlignmentOptions.Center;
                 if (fontSize > 0f)
                 {
@@ -553,6 +588,23 @@ namespace IGTAPMod
         /// — when stuck into an arbitrary layout group they end up zero-sized, off-screen,
         /// or marked ignoreLayout=true, which is why they appear invisible.
         /// </summary>
+        /// <summary>
+        /// Returns a slash-separated path from root to t, used for diagnostic dumps.
+        /// </summary>
+        private static string GetPath(Transform t, Transform root)
+        {
+            if (t == null || t == root) return "";
+            var parts = new System.Collections.Generic.List<string>();
+            var cur = t;
+            while (cur != null && cur != root)
+            {
+                parts.Add(cur.name);
+                cur = cur.parent;
+            }
+            parts.Reverse();
+            return string.Join("/", parts);
+        }
+
         private static void NormalizeForLayout(GameObject go)
         {
             var rt = go.GetComponent<RectTransform>();

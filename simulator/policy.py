@@ -338,6 +338,22 @@ class MyskoFast1Variant(FixedSequence):
     )
 
 
+class HonululuFast1(FixedSequence):
+    """From optimize.py --profile honululu-fast --course course1: 1c, 4cl, 3c, 1cl, 7c, 4cl, 2c, 2cl + wallJump."""
+
+    SEQUENCE = (
+        ["cashPerLoop"] * 1 +
+        ["cloneCount"] * 4 +
+        ["cashPerLoop"] * 3 +
+        ["cloneCount"] * 1 +
+        ["cashPerLoop"] * 7 +
+        ["cloneCount"] * 4 +
+        ["cashPerLoop"] * 2 +
+        ["cloneCount"] * 2 +
+        ["wallJump"]
+    )
+
+
 class MCTSDistilledV4(FixedSequence):
     """Best MCTS find: 168.3s. 2c,3cl,c,2cl,3c,2cl,4c,2cl,c + wallJump."""
 
@@ -467,6 +483,16 @@ class MCTSDistilledV2(FixedSequence):
         ["cashPerLoop"] * 3 +
         ["cloneCount"] * 8 +
         ["cashPerLoop"] * 7 +
+        ["wallJump"]
+    )
+class MCTSDistilledV9(FixedSequence):
+    """Grid search result: batched 3cash, 8clone, 7cash."""
+
+    SEQUENCE = (
+        ["cashPerLoop"] +
+        ["cloneCount"] * 5 +
+        ["cashPerLoop"] * 9 +
+        ["cloneCount"] * 6 +
         ["wallJump"]
     )
 

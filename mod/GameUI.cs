@@ -404,12 +404,14 @@ namespace IGTAPMod
             scrollRect.vertical = vertical;
             scrollRect.movementType = ScrollRect.MovementType.Clamped;
 
-            // Viewport (masks content)
+            // Viewport (masks content). Use RectMask2D instead of Mask — Mask with a transparent
+            // (Color.clear) Image culls all children due to how Unity's stencil-based masking
+            // evaluates the mask graphic. RectMask2D clips purely by rect bounds and doesn't need
+            // a mask graphic, which is what we actually want for a scroll viewport.
             var viewport = new GameObject("Viewport", typeof(RectTransform));
             viewport.transform.SetParent(go.transform, false);
             StretchFill(viewport);
-            viewport.AddComponent<Image>().color = Color.clear;
-            viewport.AddComponent<Mask>().showMaskGraphic = false;
+            viewport.AddComponent<RectMask2D>();
 
             // Content (parent your elements here)
             var content = new GameObject("Content", typeof(RectTransform));
@@ -547,6 +549,13 @@ namespace IGTAPMod
                 bgImage.type = Image.Type.Sliced;
             }
 
+            // Subtle focus outline — only visible when the field is focused/editing.
+            // Starts disabled, toggled by inputField.onSelect / onDeselect below.
+            var outline = go.AddComponent<Outline>();
+            outline.effectColor = new Color(0.996f, 0.416f, 0f, 0.45f);
+            outline.effectDistance = new Vector2(1.5f, -1.5f);
+            outline.enabled = false;
+
             // Text area viewport
             var textArea = new GameObject("TextArea", typeof(RectTransform));
             textArea.transform.SetParent(go.transform, false);
@@ -570,10 +579,12 @@ namespace IGTAPMod
             phTmp.fontSize = fontSize;
             phTmp.color = UIStyle.TextMuted;
             phTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            phTmp.raycastTarget = false;
             var font = GetGameFont();
             if (font != null) phTmp.font = font;
 
-            // Text display
+            // Text display — TMP_InputField needs specific settings on the text component
+            // for caret positioning to work (Overflow mode, no word wrap, no raycast target).
             var textGo = new GameObject("Text", typeof(RectTransform));
             textGo.transform.SetParent(textArea.transform, false);
             var textRt = textGo.GetComponent<RectTransform>();
@@ -585,6 +596,10 @@ namespace IGTAPMod
             textTmp.fontSize = fontSize;
             textTmp.color = UIStyle.TextPrimary;
             textTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            textTmp.raycastTarget = false;
+            textTmp.enableWordWrapping = false;
+            textTmp.overflowMode = TextOverflowModes.Overflow;
+            textTmp.enableAutoSizing = false;
             if (font != null) textTmp.font = font;
 
             // InputField component
@@ -594,10 +609,73 @@ namespace IGTAPMod
             inputField.placeholder = phTmp;
             inputField.fontAsset = font;
             inputField.pointSize = fontSize;
+            inputField.targetGraphic = bgImage;
 
-            // Caret color
-            inputField.caretColor = UIStyle.Accent;
-            inputField.selectionColor = new Color(UIStyle.Accent.r, UIStyle.Accent.g, UIStyle.Accent.b, 0.3f);
+            // Manual caret: TMP_InputField's built-in caret rendering doesn't work in this
+            // build — it never creates a caret GameObject and never injects caret vertices
+            // into any CanvasRenderer we can find. Instead, we draw our own caret bar and
+            // position it using the TMP text's textInfo at the current cursor position.
+            var caretGo = new GameObject("ManualCaret", typeof(RectTransform));
+            caretGo.transform.SetParent(textArea.transform, false);
+            var caretRt = caretGo.GetComponent<RectTransform>();
+            caretRt.anchorMin = new Vector2(0f, 0f);
+            caretRt.anchorMax = new Vector2(0f, 1f);
+            caretRt.pivot = new Vector2(0f, 0.5f);
+            caretRt.sizeDelta = new Vector2(2f, -2f);
+            caretRt.anchoredPosition = new Vector2(0f, 0f);
+            var caretImg = caretGo.AddComponent<Image>();
+            caretImg.color = Color.white;
+            caretImg.raycastTarget = false;
+            caretGo.SetActive(false);
+
+            var caretCtl = go.AddComponent<ManualCaretController>();
+            caretCtl.Init(inputField, textTmp, caretRt, caretImg);
+
+            // Click-to-position: when the user clicks the input field, set caretPosition
+            // to the nearest character under the click. TMP's own click handling isn't
+            // updating caretPosition for us, so we handle it manually.
+            var clickHandler = go.AddComponent<InputFieldClickHandler>();
+            clickHandler.Init(inputField, textTmp);
+
+            // Caret: wider + custom color so it actually shows on our dark background.
+            inputField.caretColor = Color.white;
+            inputField.customCaretColor = true;
+            inputField.caretWidth = 3;
+            inputField.caretBlinkRate = 0.85f;
+            inputField.selectionColor = new Color(0.996f, 0.416f, 0f, 0.4f); // orange tint
+
+            // Outline toggles with focus state — only shows while editing.
+            inputField.onSelect.AddListener(_ =>
+            {
+                outline.enabled = true;
+
+                // Force-activate so TMP creates the caret — onSelect alone doesn't always do it.
+                inputField.ActivateInputField();
+
+                // Use reflection to probe for any internal caret field TMP might have created.
+                var fields = typeof(TMP_InputField).GetFields(
+                    System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic |
+                    System.Reflection.BindingFlags.Public);
+                string caretFieldInfo = "";
+                foreach (var f in fields)
+                {
+                    if (!f.Name.ToLower().Contains("caret")) continue;
+                    var v = f.GetValue(inputField);
+                    caretFieldInfo += $" {f.Name}={(v?.ToString() ?? "null")}";
+                }
+                Plugin.Log.LogInfo($"[InputField] '{name}' selected: fontAsset={(inputField.fontAsset != null ? inputField.fontAsset.name : "null")} readOnly={inputField.readOnly} interactable={inputField.interactable} isFocused={inputField.isFocused} textComponent={(inputField.textComponent != null)} caretWidth={inputField.caretWidth}{caretFieldInfo}");
+
+                // Start a coroutine to dump TextArea children over the next few frames
+                // (TMP creates the caret mesh in OnUpdateSelected, not on the initial onSelect).
+                var mb = go.AddComponent<InputFieldCaretDumper>();
+                mb.Init(inputField, textAreaRt, name);
+            });
+            inputField.onDeselect.AddListener(_ =>
+            {
+                outline.enabled = false;
+                Plugin.Log.LogInfo($"[InputField] '{name}' deselected");
+            });
 
             if (onSubmit != null)
                 inputField.onSubmit.AddListener(s => onSubmit(s));
@@ -745,6 +823,217 @@ namespace IGTAPMod
             rt.anchorMax = Vector2.one;
             rt.offsetMin = Vector2.zero;
             rt.offsetMax = Vector2.zero;
+        }
+    }
+
+    /// <summary>
+    /// Custom caret renderer for TMP_InputField when the built-in caret isn't working.
+    /// Positions a simple Image bar at the current cursor position in the text, blinks it
+    /// via Update(), and toggles visibility based on input field focus state.
+    /// </summary>
+    public class ManualCaretController : MonoBehaviour
+    {
+        private TMPro.TMP_InputField _input;
+        private TMPro.TMP_Text _text;
+        private RectTransform _caretRt;
+        private Image _caretImg;
+        private float _blinkTimer;
+        private const float BlinkRate = 0.55f;
+
+        public void Init(TMPro.TMP_InputField input, TMPro.TMP_Text text, RectTransform caretRt, Image caretImg)
+        {
+            _input = input;
+            _text = text;
+            _caretRt = caretRt;
+            _caretImg = caretImg;
+        }
+
+        /// <summary>
+        /// Snap the caret to the current input field caret position immediately (outside
+        /// the normal Update cycle) and reset the blink so it's solid and visible at the
+        /// new spot. Call this after changing inputField.caretPosition externally.
+        /// </summary>
+        public void SnapToCaretPosition()
+        {
+            if (_input == null || _caretRt == null) return;
+            if (!_caretRt.gameObject.activeSelf)
+                _caretRt.gameObject.SetActive(true);
+            _blinkTimer = 0f;
+            var c = _caretImg.color;
+            c.a = 1f;
+            _caretImg.color = c;
+            UpdateCaretPosition();
+        }
+
+        private void Update()
+        {
+            if (_input == null || _caretRt == null) return;
+            bool focused = _input.isFocused;
+            if (!focused)
+            {
+                if (_caretRt.gameObject.activeSelf)
+                    _caretRt.gameObject.SetActive(false);
+                _blinkTimer = 0f;
+                return;
+            }
+
+            if (!_caretRt.gameObject.activeSelf)
+                _caretRt.gameObject.SetActive(true);
+
+            // Blink
+            _blinkTimer += Time.unscaledDeltaTime;
+            float cycle = BlinkRate * 2f;
+            bool visible = (_blinkTimer % cycle) < BlinkRate;
+            var c = _caretImg.color;
+            c.a = visible ? 1f : 0f;
+            _caretImg.color = c;
+
+            // Position caret at the cursor position in the text.
+            UpdateCaretPosition();
+        }
+
+        private void UpdateCaretPosition()
+        {
+            if (_text == null || _text.textInfo == null) return;
+
+            int caretPos = Mathf.Clamp(_input.caretPosition, 0, _text.text.Length);
+            _text.ForceMeshUpdate();
+            var ti = _text.textInfo;
+
+            // Compute the caret X position in the TEXT component's local rect space.
+            // characterInfo coordinates are in the text rect's local space (pivot-relative).
+            float localX;
+            if (ti.characterCount == 0 || caretPos == 0)
+            {
+                // Caret at the start of the text: left edge of the text rect.
+                var textRect = _text.rectTransform.rect;
+                localX = textRect.xMin + _text.margin.x;
+            }
+            else
+            {
+                int charIdx = Mathf.Clamp(caretPos - 1, 0, ti.characterCount - 1);
+                var ci = ti.characterInfo[charIdx];
+                localX = ci.topRight.x;
+            }
+
+            // Convert from text-local-space to caret-parent-local-space via world point.
+            var worldPoint = _text.rectTransform.TransformPoint(new Vector3(localX, 0f, 0f));
+            var parentRt = _caretRt.parent as RectTransform;
+            if (parentRt == null) return;
+            var parentLocal = parentRt.InverseTransformPoint(worldPoint);
+
+            // Caret has anchors (0,0)-(0,1) and pivot (0,0.5), so anchoredPosition.x measures
+            // from the parent's LEFT edge. Convert by subtracting the parent rect's xMin.
+            var pos = _caretRt.anchoredPosition;
+            pos.x = parentLocal.x - parentRt.rect.xMin;
+            _caretRt.anchoredPosition = pos;
+        }
+    }
+
+    /// <summary>
+    /// Handles click events on a TMP_InputField to position the caret at the clicked
+    /// character. TMP_InputField's built-in click-to-position doesn't update caretPosition
+    /// in our setup, so we do it manually via TMP_TextUtilities.FindNearestCharacter.
+    /// </summary>
+    public class InputFieldClickHandler : MonoBehaviour, UnityEngine.EventSystems.IPointerClickHandler
+    {
+        private TMPro.TMP_InputField _input;
+        private TMPro.TMP_Text _text;
+        private ManualCaretController _caretCtl;
+
+        public void Init(TMPro.TMP_InputField input, TMPro.TMP_Text text)
+        {
+            _input = input;
+            _text = text;
+        }
+
+        public void OnPointerClick(UnityEngine.EventSystems.PointerEventData eventData)
+        {
+            if (_input == null || _text == null) return;
+
+            // Force the text mesh up-to-date so textInfo.characterInfo reflects current content.
+            _text.ForceMeshUpdate();
+
+            // Find the character index nearest the click position.
+            int rawIdx = TMPro.TMP_TextUtilities.FindNearestCharacter(_text, eventData.position, eventData.pressEventCamera, true);
+            int idx = rawIdx;
+            if (idx < 0) idx = 0;
+
+            // Place the caret BEFORE or AFTER the nearest character based on which side of
+            // its midpoint was clicked.
+            int caretPos = idx;
+            if (idx >= 0 && idx < _text.textInfo.characterCount)
+            {
+                var ci = _text.textInfo.characterInfo[idx];
+                var worldMid = _text.rectTransform.TransformPoint(new Vector3((ci.topLeft.x + ci.topRight.x) * 0.5f, 0f, 0f));
+                if (eventData.position.x > worldMid.x)
+                    caretPos = idx + 1;
+            }
+            caretPos = Mathf.Clamp(caretPos, 0, _text.text.Length);
+
+            Plugin.Log.LogInfo($"[ClickHandler] click at {eventData.position}, FindNearestCharacter={rawIdx}, caretPos={caretPos}, text='{_text.text}' charCount={_text.textInfo.characterCount}, input.caretPosition before={_input.caretPosition}");
+
+            _input.caretPosition = caretPos;
+            _input.selectionAnchorPosition = caretPos;
+            _input.selectionFocusPosition = caretPos;
+
+            Plugin.Log.LogInfo($"[ClickHandler] after set, input.caretPosition={_input.caretPosition}");
+
+            // Snap the visual caret to this position immediately (no blink-cycle delay)
+            // so it doesn't flash at position 0 for one frame before jumping to the click.
+            if (_caretCtl == null) _caretCtl = GetComponent<ManualCaretController>();
+            if (_caretCtl != null) _caretCtl.SnapToCaretPosition();
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic helper: dumps TMP input field caret state for several frames
+    /// after the field is focused. Used to debug missing-caret issues.
+    /// </summary>
+    public class InputFieldCaretDumper : MonoBehaviour
+    {
+        private TMPro.TMP_InputField _input;
+        private RectTransform _textArea;
+        private string _name;
+        private int _frameCount;
+
+        public void Init(TMPro.TMP_InputField input, RectTransform textArea, string name)
+        {
+            _input = input;
+            _textArea = textArea;
+            _name = name;
+            _frameCount = 0;
+        }
+
+        private void Update()
+        {
+            if (_input == null) { Destroy(this); return; }
+
+            _frameCount++;
+            // Dump at frame 1, 5, 30 (then stop). Don't check isFocused — even when
+            // onSelect never flips isFocused=true, typing still works, so we keep dumping.
+            if (_frameCount == 1 || _frameCount == 5 || _frameCount == 30)
+            {
+                Plugin.Log.LogInfo($"[InputField] '{_name}' frame {_frameCount}: isFocused={_input.isFocused}, text='{_input.text}'");
+                // Recursively find any GameObject whose name contains "caret" anywhere under the input field
+                DumpCaretSearch(_input.transform, "");
+            }
+            if (_frameCount >= 30) Destroy(this);
+        }
+
+        private void DumpCaretSearch(Transform t, string path)
+        {
+            string selfPath = path.Length > 0 ? path + "/" + t.name : t.name;
+            // Dump every GameObject, not just ones named "caret"
+            var rt = t as RectTransform;
+            string info = $"  '{selfPath}' active={t.gameObject.activeSelf}";
+            var comps = t.GetComponents<Component>();
+            info += " comps=[" + string.Join(",", System.Array.ConvertAll(comps, c => c?.GetType().Name ?? "null")) + "]";
+            var cg = t.GetComponent<CanvasRenderer>();
+            if (cg != null) info += $" CR(cull={cg.cull},alpha={cg.GetAlpha()},materialCount={cg.materialCount})";
+            Plugin.Log.LogInfo(info);
+            for (int i = 0; i < t.childCount; i++)
+                DumpCaretSearch(t.GetChild(i), selfPath);
         }
     }
 

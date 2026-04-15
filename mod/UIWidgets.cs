@@ -207,7 +207,8 @@ namespace IGTAPMod
         {
             Plugin.Log.LogInfo($"[WidgetButton] Creating '{label}' via theme.CloneButton");
             var theme = GameUITheme.Instance;
-            var btn = theme.CloneButton(parent.transform, label, onClick);
+            // Text-only style matches the game's convention (orange text = clickable).
+            var btn = theme.CloneButton(parent.transform, label, onClick, textOnly: true);
             if (color.HasValue)
             {
                 var c = btn.colors;
@@ -216,7 +217,6 @@ namespace IGTAPMod
             }
             GameUI.SetSize(btn.GetComponent<RectTransform>(), height: 36);
             Root = btn.gameObject;
-            GameUITheme.DumpWidgetTreeDeep(Root, "Button_" + label);
         }
 
         public void Update() { }
@@ -236,7 +236,7 @@ namespace IGTAPMod
             var theme = GameUITheme.Instance;
             foreach (var (label, onClick) in buttons)
             {
-                var btn = theme.CloneButton(row.transform, label, onClick);
+                var btn = theme.CloneButton(row.transform, label, onClick, textOnly: true);
                 var le = btn.gameObject.AddComponent<LayoutElement>();
                 le.flexibleWidth = 1;
             }
