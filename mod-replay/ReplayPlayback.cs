@@ -616,6 +616,18 @@ namespace IGTAPReplay
                     Plugin.DbgLog($"PostMovementUpdate: warmup fc={frameCounter}, {warmupFramesRemaining - 1} remaining (no trail)");
                 }
                 warmupFramesRemaining--;
+
+                // If this was the final warmup tick AND we've reached the seek
+                // target, pause in place. Otherwise returning here lets the
+                // next postfix advance past target before the seek check fires,
+                // overshooting by one frame.
+                if (warmupFramesRemaining == 0 && seeking && frameCounter >= seekTarget)
+                {
+                    seeking = false;
+                    paused = true;
+                    Time.timeScale = 0f;
+                    Plugin.DbgLog($"PostMovementUpdate SEEK DONE post-warmup fc={frameCounter} target={seekTarget}");
+                }
                 return;
             }
 
