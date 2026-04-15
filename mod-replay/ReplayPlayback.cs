@@ -64,8 +64,16 @@ namespace IGTAPReplay
         // Saved binding overrides for ALL actions, to restore on stop
         private readonly Dictionary<System.Guid, List<string>> savedOverrides = new Dictionary<System.Guid, List<string>>();
 
-        // Skip Movement.Update on the frame where StartPlayback is called
-        private bool skipNextMovementUpdate;
+        // Pending restore: set by external callers (StartPlayback, SeekToFrame,
+        // BeginReverifyFromFrame). Consumed by PostMovementUpdate at the next
+        // postfix tick. We restore in postfix (not prefix) so that the next
+        // FixedUpdate naturally integrates from the restored body state — same
+        // lifecycle as during recording (POST fc=N → FixedUpdate → PRE fc=N+1).
+        // -1 = no pending restore. >=0 = restore from checkpoint at/before this frame.
+        private int pendingRestoreFrame = -1;
+        // Whether the pending restore is from a seek (auto-pause when target reached)
+        private bool pendingRestoreSeek;
+        private int pendingRestoreSeekTarget;
 
         // Pending unpause: set by editor.Update, executed by Movement prefix
         private bool pendingUnpause;
@@ -87,27 +95,9 @@ namespace IGTAPReplay
 
         public bool ShouldMovementUpdate()
         {
-            if (skipNextMovementUpdate)
-            {
-                skipNextMovementUpdate = false;
-                // Restore right before the first frame runs — no gap for Unity's
-                // physics engine to drift the Rigidbody2D (gravity, collisions, etc.)
-                // between restore and the first Movement.Update.
-                RestoreCheckpointBefore(0);
-
-                if (Time.deltaTime == 0f)
-                {
-                    // dt=0 on the startup frame (timeScale change not yet in effect).
-                    // Movement.Update would be a no-op, so skip — but we MUST re-arm
-                    // the skip so the restore + run happens on the next frame instead.
-                    skipNextMovementUpdate = true;
-                    Plugin.DbgLog("ShouldMovementUpdate: restored but dt=0, re-arming skip");
-                    return false;
-                }
-
-                Plugin.DbgLog("ShouldMovementUpdate: restored initial state, proceeding with frame 1");
-                return true; // bypass all other checks — first frame MUST run
-            }
+            // Restore is now handled in PostMovementUpdate (postfix), not here.
+            // Movement.Update always runs normally — this matches recording's
+            // lifecycle exactly and avoids skipping any internal game state.
 
             // Execute pending unpause HERE, at the exact right lifecycle point.
             // Only execute when dt > 0, otherwise Movement would be a no-op.
@@ -172,8 +162,11 @@ namespace IGTAPReplay
             seeking = false;
             checkpointIndex = 0;
 
-            // Restore initial state from frame-0 checkpoint
-            RestoreCheckpointBefore(0);
+            // Defer restore to the next Movement.Update postfix. This way the
+            // following FixedUpdate naturally integrates from the restored body
+            // state — same lifecycle as during recording.
+            pendingRestoreFrame = 0;
+            pendingRestoreSeek = false;
 
             lastMousePos = Vector2.zero;
             prevInjectedKeys.Clear();
@@ -198,10 +191,9 @@ namespace IGTAPReplay
             RebindActions();
 
             playing = true;
-            skipNextMovementUpdate = true;
 
             var dbgBody = (Rigidbody2D)ReplayState.F_body.GetValue(player);
-            Plugin.DbgLog($"StartPlayback: playing=true skipNext=true fc={frameCounter} dt={Time.deltaTime:F4} vel=({dbgBody.linearVelocityX:F1},{dbgBody.linearVelocityY:F1}) pos=({dbgBody.position.x:F1},{dbgBody.position.y:F1})");
+            Plugin.DbgLog($"StartPlayback: playing=true pendingRestore=0 fc={frameCounter} dt={Time.deltaTime:F4} vel=({dbgBody.linearVelocityX:F1},{dbgBody.linearVelocityY:F1}) pos=({dbgBody.position.x:F1},{dbgBody.position.y:F1})");
 
             Log.LogInfo($"Playback started. {replayFile.Spans.Count} spans to play.");
         }
@@ -264,14 +256,20 @@ namespace IGTAPReplay
 
             if (targetFrame <= frameCounter)
             {
-                RestoreCheckpointBefore(targetFrame);
-                Plugin.DbgLog($"SeekToFrame restored checkpoint, now at fc={frameCounter}");
+                // Defer restore to the next postfix, where the FixedUpdate→
+                // Movement.Update lifecycle naturally integrates from restored state.
+                pendingRestoreFrame = targetFrame;
+                pendingRestoreSeek = true;
+                pendingRestoreSeekTarget = targetFrame;
+                Plugin.DbgLog($"SeekToFrame: pendingRestore={targetFrame}");
             }
-
-            seeking = true;
-            seekTarget = targetFrame;
+            else
+            {
+                seeking = true;
+                seekTarget = targetFrame;
+            }
             paused = false;
-            Plugin.DbgLog($"SeekToFrame set seeking=true target={seekTarget} paused=false timeScale={Time.timeScale}");
+            Plugin.DbgLog($"SeekToFrame set seeking={seeking} target={seekTarget} paused=false timeScale={Time.timeScale}");
         }
 
         private void RestoreCheckpointBefore(int targetFrame)
@@ -400,10 +398,10 @@ namespace IGTAPReplay
             reverifyLastCapturedFrame = -1;
             reverifyDirtyFrame = fromFrame;
 
-            // Always re-verify from the very beginning of the replay so that
-            // ALL checkpoints and verify points are regenerated consistently.
+            // Defer restore to the next postfix.
             finished = false;
-            RestoreCheckpointBefore(0);
+            pendingRestoreFrame = 0;
+            pendingRestoreSeek = false;
 
             reverifying = true;
             seeking = false;
@@ -411,7 +409,7 @@ namespace IGTAPReplay
             paused = false;
             PauseOnFrame = 0;
             Time.timeScale = 1f;
-            Plugin.DbgLog($"BeginReverifyFromFrame fromFrame={fromFrame} cadence={cadence}");
+            Plugin.DbgLog($"BeginReverifyFromFrame fromFrame={fromFrame} cadence={cadence}, pendingRestore=0");
         }
 
         /// <summary>
@@ -465,6 +463,29 @@ namespace IGTAPReplay
         public void PostMovementUpdate()
         {
             if (!playing || player == null) return;
+
+            // Pending restore: Movement.Update already ran (with whatever state
+            // was there — we don't care, we're about to overwrite it). Restore
+            // here in postfix so the next FixedUpdate naturally integrates from
+            // restored body state — same lifecycle as during recording.
+            if (pendingRestoreFrame >= 0)
+            {
+                int target = pendingRestoreFrame;
+                bool wasSeek = pendingRestoreSeek;
+                int seekTgt = pendingRestoreSeekTarget;
+                pendingRestoreFrame = -1;
+                pendingRestoreSeek = false;
+                RestoreCheckpointBefore(target);
+                Plugin.DbgLog($"PostMovementUpdate: restored from pending checkpoint at frame {frameCounter}");
+                if (wasSeek)
+                {
+                    seeking = true;
+                    seekTarget = seekTgt;
+                }
+                // Skip validation this frame — we just restored, the state IS the checkpoint.
+                return;
+            }
+
             if (!seeking && (finished || paused))
             {
                 Plugin.DbgLog($"PostMovementUpdate SKIPPED fc={frameCounter} seeking={seeking} finished={finished} paused={paused}");

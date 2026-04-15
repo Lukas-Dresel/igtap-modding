@@ -362,25 +362,38 @@ namespace IGTAPReplay
             body.position = snap.BodyPosition;
             Plugin.DbgLog($"  RESTORE-STEP-C (after body.position=): body=({body.position.x:F4},{body.position.y:F4}) tr=({player.transform.position.x:F4},{player.transform.position.y:F4})");
 
-            // Establish contacts at the new position. Without this, Box2D has
-            // no contact cache after a teleport — the next FixedUpdate creates
-            // cold-started contacts that push the body out of penetration
-            // differently than during recording (where contacts had history).
-            // Two zero-time Simulate calls force broadphase + warm-start.
-            var prevMode = Physics2D.simulationMode;
-            if (prevMode != SimulationMode2D.Script)
+            // BROADPHASE NUDGE — force Box2D to re-discover contacts at the new
+            // position. Setting position alone doesn't invalidate the broadphase;
+            // a nudge + sync forces re-evaluation. Then a zero-dt Simulate runs
+            // contact discovery (without integrating velocity).
+            int nBefore = 0;
+            var ctsB = new ContactPoint2D[8];
+            try { nBefore = body.GetContacts(ctsB); } catch {}
+
+            body.WakeUp();
+            // Nudge position by tiny offset, sync, then put it back, sync again.
+            // This forces Box2D's broadphase to re-evaluate.
+            var targetPos = snap.BodyPosition;
+            body.position = targetPos + new Vector2(0.01f, 0.01f);
+            Physics2D.SyncTransforms();
+            body.position = targetPos;
+            Physics2D.SyncTransforms();
+            // Now run zero-dt Simulate to trigger contact discovery
+            var prevModeD = Physics2D.simulationMode;
+            if (prevModeD != SimulationMode2D.Script)
                 Physics2D.simulationMode = SimulationMode2D.Script;
-            try
+            try { Physics2D.Simulate(0f); } finally
             {
-                Physics2D.Simulate(0f);
-                Physics2D.Simulate(0f);
+                if (prevModeD != SimulationMode2D.Script)
+                    Physics2D.simulationMode = prevModeD;
             }
-            finally
-            {
-                if (prevMode != SimulationMode2D.Script)
-                    Physics2D.simulationMode = prevMode;
-            }
-            Plugin.DbgLog($"  RESTORE-STEP-D (after Simulate): body=({body.position.x:F4},{body.position.y:F4}) tr=({player.transform.position.x:F4},{player.transform.position.y:F4})");
+            // Re-set position/velocity in case anything moved them
+            body.position = snap.BodyPosition;
+            body.linearVelocity = snap.Velocity;
+
+            int nAfterNudge = 0;
+            try { nAfterNudge = body.GetContacts(ctsB); } catch {}
+            Plugin.DbgLog($"  RESTORE-STEP-D: BroadphaseNudge n_contacts before={nBefore} after={nAfterNudge}");
             // Re-set position/velocity in case Simulate nudged them
             body.position = snap.BodyPosition;
             body.linearVelocity = snap.Velocity;
@@ -409,6 +422,148 @@ namespace IGTAPReplay
             }
             Plugin.DbgLog($"Restore readback: transformPos={posOk} bodyPos={bodyPosOk} vel={velOk} mom={momOk} fac={facOk} wjd={wjdOk} wjl={wjlOk} bodyType={body.bodyType} gravScale={body.gravityScale} simulated={body.simulated} interp={body.interpolation}");
             Plugin.DbgLog($"  POST-RESTORE-IMMEDIATE: body.pos=({body.position.x:F4},{body.position.y:F4}) transform.pos=({player.transform.position.x:F4},{player.transform.position.y:F4})");
+        }
+
+        // === Unity 6 LowLevelPhysics2D PhysicsBody.SetTransformTarget bridge ===
+        // The new low-level API can teleport a body while properly establishing
+        // contacts (designed for this exact case). We access it via reflection
+        // since there's no public accessor from Rigidbody2D → PhysicsBody.
+
+        private static System.Type _physicsBodyType;
+        private static System.Type _physicsTransformType;
+        private static System.Type _physicsRotateType;
+        private static System.Type _physicsWorldType;
+        private static MethodInfo _physicsWorldGetDefault;
+        private static MethodInfo _physicsWorldGetBodies;
+        private static PropertyInfo _physicsBodyPosition;
+        private static MethodInfo _physicsBodySetTransformTarget;
+        private static MethodInfo _physicsRotateFromAngle;
+        private static ConstructorInfo _physicsTransformCtor;
+        private static bool _reflectionInitTried;
+
+        private static bool InitReflection()
+        {
+            if (_reflectionInitTried) return _physicsBodyType != null;
+            _reflectionInitTried = true;
+            try
+            {
+                var asm = typeof(Rigidbody2D).Assembly;
+                _physicsBodyType = asm.GetType("UnityEngine.LowLevelPhysics2D.PhysicsBody");
+                _physicsTransformType = asm.GetType("UnityEngine.LowLevelPhysics2D.PhysicsTransform");
+                _physicsRotateType = asm.GetType("UnityEngine.LowLevelPhysics2D.PhysicsRotate");
+                _physicsWorldType = asm.GetType("UnityEngine.LowLevelPhysics2D.PhysicsWorld");
+
+                if (_physicsBodyType == null || _physicsWorldType == null)
+                {
+                    Plugin.Log.LogWarning($"InitReflection: PhysicsBody or PhysicsWorld type not found (Unity version too old?)");
+                    return false;
+                }
+
+                _physicsWorldGetDefault = _physicsWorldType.GetProperty("defaultPhysicsWorld",
+                    BindingFlags.Public | BindingFlags.Static)?.GetGetMethod();
+                if (_physicsWorldGetDefault == null)
+                {
+                    // Try alternate names
+                    var prop = _physicsWorldType.GetProperty("defaultWorld",
+                        BindingFlags.Public | BindingFlags.Static);
+                    _physicsWorldGetDefault = prop?.GetGetMethod();
+                }
+
+                _physicsWorldGetBodies = _physicsWorldType.GetMethod("GetBodies",
+                    BindingFlags.Public | BindingFlags.Instance);
+                _physicsBodyPosition = _physicsBodyType.GetProperty("position",
+                    BindingFlags.Public | BindingFlags.Instance);
+                _physicsBodySetTransformTarget = _physicsBodyType.GetMethod("SetTransformTarget",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (_physicsBodySetTransformTarget == null)
+                    _physicsBodySetTransformTarget = _physicsBodyType.GetMethod("SetTransformTarget",
+                        BindingFlags.NonPublic | BindingFlags.Instance);
+
+                if (_physicsRotateType != null)
+                    _physicsRotateFromAngle = _physicsRotateType.GetMethod("FromAngle",
+                        BindingFlags.Public | BindingFlags.Static);
+
+                if (_physicsTransformType != null)
+                    _physicsTransformCtor = _physicsTransformType.GetConstructor(
+                        new[] { typeof(Vector2), _physicsRotateType });
+
+                Plugin.DbgLog($"InitReflection: PhysicsBody={_physicsBodyType != null} GetBodies={_physicsWorldGetBodies != null} SetTransformTarget={_physicsBodySetTransformTarget != null} TransformCtor={_physicsTransformCtor != null}");
+                return _physicsBodySetTransformTarget != null;
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogWarning($"InitReflection failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Find the PhysicsBody matching the given Rigidbody2D (by position match)
+        /// and call SetTransformTarget to teleport with proper contact establishment.
+        /// Returns the contact count after the operation, or -1 on failure.
+        /// </summary>
+        private static int TrySetTransformTargetForRigidbody(Rigidbody2D body, Vector2 targetPos, float targetRotDegrees)
+        {
+            if (!InitReflection()) return -1;
+            try
+            {
+                // Get default physics world
+                var world = _physicsWorldGetDefault?.Invoke(null, null);
+                if (world == null) { Plugin.DbgLog("TrySetTransformTarget: no default world"); return -1; }
+                Plugin.DbgLog($"TrySetTransformTarget: world={world} type={world.GetType().FullName}");
+
+                // Get all bodies — returns NativeArray<PhysicsBody>
+                var bodies = _physicsWorldGetBodies.Invoke(world, new object[] { 0 /*Allocator.Temp*/ });
+                if (bodies == null) { Plugin.DbgLog("TrySetTransformTarget: GetBodies returned null"); return -1; }
+
+                // NativeArray<PhysicsBody> — get Length and indexer via reflection
+                var bodiesType = bodies.GetType();
+                Plugin.DbgLog($"TrySetTransformTarget: bodies type={bodiesType.FullName}");
+                var lengthProp = bodiesType.GetProperty("Length");
+                int length = (int)lengthProp.GetValue(bodies);
+                Plugin.DbgLog($"TrySetTransformTarget: bodies count={length}");
+                var indexer = bodiesType.GetMethod("get_Item");
+
+                // Find body with matching position (within tolerance)
+                Vector2 currentPos = body.position;
+                object matchedBody = null;
+                float bestDist = float.MaxValue;
+                for (int i = 0; i < length; i++)
+                {
+                    var pb = indexer.Invoke(bodies, new object[] { i });
+                    var pbPos = (Vector2)_physicsBodyPosition.GetValue(pb);
+                    float d = Vector2.Distance(pbPos, currentPos);
+                    if (i < 3) Plugin.DbgLog($"TrySetTransformTarget: body[{i}] pos=({pbPos.x:F2},{pbPos.y:F2}) dist={d:F2}");
+                    if (d < bestDist) { bestDist = d; matchedBody = pb; }
+                }
+
+                // Dispose the NativeArray
+                var disposeMethod = bodiesType.GetMethod("Dispose", System.Type.EmptyTypes);
+                disposeMethod?.Invoke(bodies, null);
+
+                if (matchedBody == null || bestDist > 0.5f)
+                {
+                    Plugin.DbgLog($"TrySetTransformTarget: no match (best dist={bestDist})");
+                    return -1;
+                }
+
+                // Build PhysicsTransform(targetPos, PhysicsRotate.FromAngle(rotDeg))
+                var rot = _physicsRotateFromAngle.Invoke(null, new object[] { targetRotDegrees });
+                var pt = _physicsTransformCtor.Invoke(new object[] { targetPos, rot });
+
+                // Call SetTransformTarget(transform, fixedDeltaTime)
+                _physicsBodySetTransformTarget.Invoke(matchedBody, new object[] { pt, Time.fixedDeltaTime });
+
+                // Read contacts after
+                var ctsAfter = new ContactPoint2D[8];
+                int n = body.GetContacts(ctsAfter);
+                return n;
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogWarning($"TrySetTransformTarget exception: {ex.Message}");
+                return -1;
+            }
         }
     }
 }
