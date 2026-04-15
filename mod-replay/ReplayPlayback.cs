@@ -75,6 +75,50 @@ namespace IGTAPReplay
         private bool pendingRestoreSeek;
         private int pendingRestoreSeekTarget;
 
+        // Warmup state: while > 0, Movement.Update + FixedUpdate run normally
+        // (inputs are injected, gravity applies, contacts form). PostMovementUpdate
+        // force-snaps body.position/linearVelocity back to the live trail each
+        // tick so drift from cold-cache physics doesn't accumulate. Validation,
+        // ghost updates, and seek/end-of-replay detection are suppressed until
+        // warmup completes.
+        private int warmupFramesRemaining;
+        private const int WarmupFrames = 3;
+        private bool warmupUsingTrail; // true if liveTrail has entries for the warmup range
+        private int warmupLastSeenFrame = -1; // detect postfix calls without a frame advance
+
+        // Live trail: runtime-only cache of body.position / body.linearVelocity
+        // captured at every postfix tick during normal playback. Used by the
+        // kinematic warmup path: to seek to frame T, we restore to a full
+        // checkpoint C, then for frames [C+1, T] drive the body from liveTrail[i]
+        // so Box2D builds contact manifolds against the recording's trajectory.
+        //
+        // Invalidated (truncated) by ReplayPlayback.InvalidateTrailFrom when an
+        // edit happens. Not persisted to disk — rebuilt as playback progresses.
+        private struct BodyTrailEntry { public Vector2 Pos; public Vector2 Vel; }
+        private readonly List<BodyTrailEntry> liveTrail = new List<BodyTrailEntry>();
+        private int liveTrailValidThrough = -1;
+
+        private void WriteTrail(int frame, Vector2 pos, Vector2 vel)
+        {
+            while (liveTrail.Count <= frame) liveTrail.Add(default);
+            liveTrail[frame] = new BodyTrailEntry { Pos = pos, Vel = vel };
+            if (frame > liveTrailValidThrough) liveTrailValidThrough = frame;
+        }
+
+        /// <summary>
+        /// Invalidate trail entries at or after `frame`. Called when an edit
+        /// modifies inputs: anything from the edit onward can no longer be
+        /// trusted to match the recorded physics trajectory.
+        /// </summary>
+        public void InvalidateTrailFrom(int frame)
+        {
+            if (frame <= liveTrailValidThrough)
+            {
+                liveTrailValidThrough = frame - 1;
+                Plugin.DbgLog($"InvalidateTrailFrom({frame}): validThrough={liveTrailValidThrough}");
+            }
+        }
+
         // Pending unpause: set by editor.Update, executed by Movement prefix
         private bool pendingUnpause;
         private int pendingPauseOnFrame;
@@ -167,6 +211,12 @@ namespace IGTAPReplay
             // state — same lifecycle as during recording.
             pendingRestoreFrame = 0;
             pendingRestoreSeek = false;
+
+            // Reset live trail — it will be populated as playback progresses.
+            liveTrail.Clear();
+            liveTrailValidThrough = -1;
+            warmupFramesRemaining = 0;
+            warmupUsingTrail = false;
 
             lastMousePos = Vector2.zero;
             prevInjectedKeys.Clear();
@@ -269,7 +319,41 @@ namespace IGTAPReplay
                 seekTarget = targetFrame;
             }
             paused = false;
+            // Previous auto-pause left timeScale=0. Without this, dt stays 0,
+            // Movement.Update skips, frameCounter never advances, and the warmup
+            // countdown drains on postfix-only ticks without actually warming.
+            Time.timeScale = 1f;
             Plugin.DbgLog($"SeekToFrame set seeking={seeking} target={seekTarget} paused=false timeScale={Time.timeScale}");
+        }
+
+        /// <summary>
+        /// Warmup-aware restore: restores from a checkpoint at/before
+        /// (target - WarmupFrames), then returns how many frames of silent
+        /// replay are needed to reach `target`. Caller sets
+        /// warmupFramesRemaining to the returned value.
+        /// </summary>
+        private int RestoreWithWarmup(int target)
+        {
+            int preWarmupFrame = Mathf.Max(0, target - WarmupFrames);
+            var cps = replayFile.Checkpoints;
+
+            // Find the latest checkpoint at/before preWarmupFrame
+            int idx = -1;
+            for (int i = cps.Count - 1; i >= 0; i--)
+            {
+                if (cps[i].Frame <= preWarmupFrame) { idx = i; break; }
+            }
+            // Fallback: if no checkpoint ≤ preWarmupFrame but we do have checkpoints,
+            // use the earliest. This happens when target is very small (e.g. 0 or 1).
+            if (idx < 0 && cps.Count > 0) idx = 0;
+
+            int restoredFrame = (idx >= 0 && idx < cps.Count) ? cps[idx].Frame : 0;
+            // If the best checkpoint is already > target, don't overshoot — clamp.
+            if (restoredFrame > target) restoredFrame = target;
+
+            RestoreCheckpointBefore(restoredFrame);
+            int warmupNeeded = Mathf.Max(0, target - restoredFrame);
+            return warmupNeeded;
         }
 
         private void RestoreCheckpointBefore(int targetFrame)
@@ -468,6 +552,10 @@ namespace IGTAPReplay
             // was there — we don't care, we're about to overwrite it). Restore
             // here in postfix so the next FixedUpdate naturally integrates from
             // restored body state — same lifecycle as during recording.
+            //
+            // We restore to a checkpoint WarmupFrames before the requested target,
+            // then silently replay those frames so Box2D builds natural contact
+            // history (warm-start impulses) that matches the recording.
             if (pendingRestoreFrame >= 0)
             {
                 int target = pendingRestoreFrame;
@@ -475,14 +563,59 @@ namespace IGTAPReplay
                 int seekTgt = pendingRestoreSeekTarget;
                 pendingRestoreFrame = -1;
                 pendingRestoreSeek = false;
-                RestoreCheckpointBefore(target);
-                Plugin.DbgLog($"PostMovementUpdate: restored from pending checkpoint at frame {frameCounter}");
+
+                int warmupNeeded = RestoreWithWarmup(target);
+                warmupFramesRemaining = warmupNeeded;
+                warmupLastSeenFrame = frameCounter;
+                // Trail is usable if it covers [restoredFrame+1, target].
+                int firstWarmup = frameCounter + 1;
+                int lastWarmup = target;
+                warmupUsingTrail = (warmupNeeded > 0 &&
+                                    firstWarmup <= liveTrailValidThrough &&
+                                    lastWarmup <= liveTrailValidThrough);
+                Plugin.DbgLog($"PostMovementUpdate: restored at frame {frameCounter}, target={target}, warmup={warmupNeeded}, usingTrail={warmupUsingTrail} (valid through {liveTrailValidThrough})");
                 if (wasSeek)
                 {
                     seeking = true;
                     seekTarget = seekTgt;
                 }
                 // Skip validation this frame — we just restored, the state IS the checkpoint.
+                return;
+            }
+
+            // Warmup: silently replay frames to let Box2D build contact history.
+            // Movement.Update + FixedUpdate run normally (recorded inputs are
+            // injected via InjectCurrentFrame in the prefix). If the live trail
+            // covers this frame, force-snap body pos/vel back onto the recorded
+            // trajectory so drift from cold-cache physics doesn't compound.
+            if (warmupFramesRemaining > 0)
+            {
+                // Guard: only tick warmup when frameCounter actually advanced
+                // (i.e. InjectCurrentFrame ran). Otherwise postfix-only ticks
+                // (timeScale=0, paused, etc.) would drain the countdown without
+                // any physics actually running.
+                if (frameCounter == warmupLastSeenFrame)
+                {
+                    Plugin.DbgLog($"PostMovementUpdate: warmup postfix at fc={frameCounter} but frame didn't advance — waiting");
+                    return;
+                }
+                warmupLastSeenFrame = frameCounter;
+                if (warmupUsingTrail && frameCounter >= 0 && frameCounter < liveTrail.Count)
+                {
+                    var warmupBody = (Rigidbody2D)ReplayState.F_body.GetValue(player);
+                    var t = liveTrail[frameCounter];
+                    var wasInterp = warmupBody.interpolation;
+                    warmupBody.interpolation = RigidbodyInterpolation2D.None;
+                    warmupBody.position = t.Pos;
+                    warmupBody.linearVelocity = t.Vel;
+                    warmupBody.interpolation = wasInterp;
+                    Plugin.DbgLog($"PostMovementUpdate: warmup fc={frameCounter}, snapped to trail pos={t.Pos} vel={t.Vel}, {warmupFramesRemaining - 1} remaining");
+                }
+                else
+                {
+                    Plugin.DbgLog($"PostMovementUpdate: warmup fc={frameCounter}, {warmupFramesRemaining - 1} remaining (no trail)");
+                }
+                warmupFramesRemaining--;
                 return;
             }
 
@@ -494,6 +627,13 @@ namespace IGTAPReplay
 
             // FULL state dump at POSTFIX ENTRY — what Movement.Update produced
             Plugin.DbgLog($"PLAY-POST fc={frameCounter} :: {ReplayState.DumpAllFields(player)}");
+
+            // Record body state into the live trail. This is what warmup-driven
+            // seeks read from to scripted-move the body during kinematic warmup.
+            {
+                var trailBody = (Rigidbody2D)ReplayState.F_body.GetValue(player);
+                WriteTrail(frameCounter, trailBody.position, trailBody.linearVelocity);
+            }
 
             // Validate checkpoints and capture reverify points AFTER Movement.Update
             // ran — this is the deterministic point, matching where recording captures them.

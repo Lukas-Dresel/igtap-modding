@@ -286,6 +286,11 @@ namespace IGTAPReplay
 
         private void InvalidateDownstream(int frame)
         {
+            // The edit takes effect at `frame`; anything the player's physics
+            // did from `frame` onward in the live trail is now stale.
+            var playback = UnityEngine.Object.FindAnyObjectByType<ReplayPlayback>();
+            if (playback != null) playback.InvalidateTrailFrom(frame);
+
             // Drop every checkpoint with Frame > frame. The nearest checkpoint at
             // or before `frame` remains valid because the edit happens after it.
             for (int i = File.Checkpoints.Count - 1; i >= 0; i--)
