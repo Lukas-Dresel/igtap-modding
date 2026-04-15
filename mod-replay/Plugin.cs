@@ -380,6 +380,7 @@ namespace IGTAPReplay
                 editor = gameObject.AddComponent<ReplayEditor>();
 
             DbgLog("PlayFile called");
+            editor.OriginalLoadPath = path;
             playback.StartPlayback(player, replayFile);
             editor.BeginReplay(player, replayFile);
             mode = Mode.Playing;
@@ -655,6 +656,11 @@ namespace IGTAPReplay
     [HarmonyPatch(typeof(Movement), "Update")]
     public static class MovementUpdatePatch
     {
+        // True while Movement.Update is actively executing — used to gate
+        // Physics2D.Raycast logging so we only capture the game's own raycasts.
+        public static bool InMovementUpdate;
+        public static int RaycastCallIndex; // resets each Movement.Update, ticks per raycast
+
         static bool Prefix(Movement __instance)
         {
             var ringBuffer = Plugin.Instance?.ringBuffer;
@@ -679,16 +685,52 @@ namespace IGTAPReplay
             }
 
             Plugin.DbgLog("Movement.Update PREFIX -> RUN");
+            InMovementUpdate = true;
+            RaycastCallIndex = 0;
             return true;
         }
 
         static void Postfix(Movement __instance)
         {
+            InMovementUpdate = false;
+
+            // Recording: capture checkpoints/verify points after Movement.Update
+            var ringBuffer = Plugin.Instance?.ringBuffer;
             var playback = Object.FindAnyObjectByType<ReplayPlayback>();
-            if (playback != null && playback.IsPlaying)
+            bool isPlaying = playback != null && playback.IsPlaying;
+
+            if (ringBuffer != null && ringBuffer.IsRunning && !isPlaying)
+                ringBuffer.OnPostFrame(__instance);
+
+            if (isPlaying)
             {
                 Plugin.DbgLog($"Movement.Update POSTFIX fc={playback.FrameCount}");
                 playback.PostMovementUpdate();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Harmony hook on Physics2D.Raycast(Vector2, Vector2, float, int) — logs every
+    /// call made from inside Movement.Update so we can see exactly what ground/wall
+    /// detection is returning. Gated by MovementUpdatePatch.InMovementUpdate so we
+    /// don't drown in other scripts' raycasts.
+    /// </summary>
+    [HarmonyPatch(typeof(Physics2D), nameof(Physics2D.Raycast),
+        new System.Type[] { typeof(Vector2), typeof(Vector2), typeof(float), typeof(int) })]
+    public static class Physics2DRaycastPatch
+    {
+        static void Postfix(Vector2 origin, Vector2 direction, float distance, int layerMask, RaycastHit2D __result)
+        {
+            if (!MovementUpdatePatch.InMovementUpdate) return;
+            int idx = MovementUpdatePatch.RaycastCallIndex++;
+            if (__result.collider != null)
+            {
+                Plugin.DbgLog($"  RC[{idx}] origin=({origin.x:F3},{origin.y:F3}) dir=({direction.x:F2},{direction.y:F2}) dist={distance:F1} mask=0x{layerMask:X} -> HIT @({__result.point.x:F3},{__result.point.y:F3}) d={__result.distance:F3} n=({__result.normal.x:F2},{__result.normal.y:F2}) tag={__result.collider.tag} col={__result.collider.name}");
+            }
+            else
+            {
+                Plugin.DbgLog($"  RC[{idx}] origin=({origin.x:F3},{origin.y:F3}) dir=({direction.x:F2},{direction.y:F2}) dist={distance:F1} mask=0x{layerMask:X} -> MISS");
             }
         }
     }

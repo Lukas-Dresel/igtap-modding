@@ -103,6 +103,41 @@ namespace IGTAPReplay
         // Speedrun metadata (set when recording is a speedrun capture)
         public string SpeedrunProfile;
         public string SpeedrunSplits;
+
+        /// <summary>
+        /// Deep-copy everything that mutates during editing — spans (including their
+        /// Keys sets), checkpoints, verify points, and events. Bindings and
+        /// InitialState are treated as immutable references.
+        /// Used by ReplayEditSession to snapshot undo/redo state.
+        /// </summary>
+        public ReplayFile DeepCloneForEdit()
+        {
+            var copy = new ReplayFile
+            {
+                Version = Version,
+                RecordedAt = RecordedAt,
+                Timestep = Timestep,
+                InitialState = InitialState,
+                Bindings = Bindings,
+                SpeedrunProfile = SpeedrunProfile,
+                SpeedrunSplits = SpeedrunSplits,
+                Spans = new List<InputSpan>(Spans.Count),
+                VerifyPoints = new List<VerifyPoint>(VerifyPoints),
+                Checkpoints = new List<ReplayCheckpoint>(Checkpoints),
+                Events = new List<EventMarker>(Events),
+            };
+            foreach (var s in Spans)
+            {
+                copy.Spans.Add(new InputSpan
+                {
+                    Frame = s.Frame,
+                    Keys = new HashSet<string>(s.Keys),
+                    MousePos = s.MousePos,
+                    XMoveAxis = s.XMoveAxis,
+                });
+            }
+            return copy;
+        }
     }
 
     /// <summary>
@@ -110,6 +145,39 @@ namespace IGTAPReplay
     /// </summary>
     public static class ReplayFormat
     {
+        /// <summary>
+        /// Given a replay path like "foo.replay" or "foo_edit3.replay", return the
+        /// first non-existent name in the sequence "foo_edit1.replay", "foo_edit2.replay", …
+        /// (or "foo_edit4.replay", …) so edit-session Save-As never overwrites. The
+        /// suffix count is always taken off the ORIGINAL (first non-_editN) base, so
+        /// multiple saves in one session produce _edit1, _edit2, _edit3, not
+        /// _edit1, _edit1_edit1.
+        /// </summary>
+        public static string NextEditPath(string originalPath)
+        {
+            string dir = Path.GetDirectoryName(originalPath);
+            string name = Path.GetFileNameWithoutExtension(originalPath);
+            string ext = Path.GetExtension(originalPath);
+
+            // Strip any existing "_editN" suffix so we always branch off the base.
+            int underscore = name.LastIndexOf("_edit");
+            if (underscore >= 0)
+            {
+                string tail = name.Substring(underscore + 5);
+                if (tail.Length > 0 && int.TryParse(tail, out _))
+                    name = name.Substring(0, underscore);
+            }
+
+            for (int n = 1; n < 10000; n++)
+            {
+                string candidate = Path.Combine(dir ?? "", $"{name}_edit{n}{ext}");
+                if (!File.Exists(candidate))
+                    return candidate;
+            }
+            // Fallback: timestamp suffix (extremely unlikely to hit)
+            return Path.Combine(dir ?? "", $"{name}_edit{DateTime.Now:HHmmss}{ext}");
+        }
+
         public static void Write(ReplayFile file, string path)
         {
             var sb = new StringBuilder();

@@ -16,6 +16,10 @@ namespace IGTAPReplay
         // InputSystem path -> short name
         private static readonly Dictionary<string, string> toName = new Dictionary<string, string>();
 
+        // All known InputSystem paths in registration order (keyboard -> mouse -> gamepad).
+        // Used by the "Add key" picker as a baseline enumeration.
+        private static readonly List<string> allPaths = new List<string>();
+
         static KeyNames()
         {
             // Keyboard - letters
@@ -95,7 +99,16 @@ namespace IGTAPReplay
         {
             toPath[shortName] = path;
             toName[path] = shortName;
+            allPaths.Add(path);
         }
+
+        /// <summary>
+        /// All known InputSystem paths in stable registration order
+        /// (keyboard letters → digits → specials → F-keys → mouse → gamepad).
+        /// The "Add key" picker uses this as its baseline list; bound game keys
+        /// are surfaced on top of this order by the picker UI itself.
+        /// </summary>
+        public static IReadOnlyList<string> AllPaths() => allPaths;
 
         /// <summary>
         /// Convert an InputSystem path to a short display name.

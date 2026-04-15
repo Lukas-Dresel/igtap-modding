@@ -1,4 +1,7 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using System.Text;
 using HarmonyLib;
 using UnityEngine;
 
@@ -10,6 +13,93 @@ namespace IGTAPReplay
     /// </summary>
     public static class ReplayState
     {
+        // Cached list of all instance fields on Movement, for exhaustive state dumping
+        private static FieldInfo[] _allMovementFields;
+        public static FieldInfo[] AllMovementFields
+        {
+            get
+            {
+                if (_allMovementFields == null)
+                {
+                    _allMovementFields = typeof(Movement).GetFields(
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                }
+                return _allMovementFields;
+            }
+        }
+
+        /// <summary>
+        /// Dump every instance field on the Movement component with a short, parseable
+        /// representation. For Rigidbody2D also dumps key physics properties.
+        /// </summary>
+        public static string DumpAllFields(Movement player)
+        {
+            if (player == null) return "(null player)";
+            var sb = new StringBuilder();
+            foreach (var f in AllMovementFields)
+            {
+                object v;
+                try { v = f.GetValue(player); }
+                catch (System.Exception ex) { v = $"<err:{ex.GetType().Name}>"; continue; }
+                sb.Append(f.Name).Append('=').Append(FormatValue(v)).Append(' ');
+            }
+            // Also dump Rigidbody2D state
+            var body = (Rigidbody2D)F_body.GetValue(player);
+            if (body != null)
+            {
+                sb.Append("[RB ");
+                sb.Append($"pos=({body.position.x:F3},{body.position.y:F3}) ");
+                sb.Append($"vel=({body.linearVelocity.x:F3},{body.linearVelocity.y:F3}) ");
+                sb.Append($"ang={body.angularVelocity:F3} ");
+                sb.Append($"rot={body.rotation:F3} ");
+                sb.Append($"sim={body.simulated} ");
+                sb.Append($"sleep={body.IsSleeping()} ");
+                sb.Append($"bodyType={body.bodyType} ");
+                sb.Append($"grav={body.gravityScale}");
+                sb.Append(']');
+            }
+            sb.Append($" [TR pos=({player.transform.position.x:F3},{player.transform.position.y:F3},{player.transform.position.z:F3})");
+            sb.Append($" scale=({player.transform.localScale.x:F1},{player.transform.localScale.y:F1},{player.transform.localScale.z:F1})]");
+
+            // Rigidbody2D contact points (what Box2D thinks the body is touching)
+            if (body != null)
+            {
+                var contacts = new ContactPoint2D[16];
+                int n = body.GetContacts(contacts);
+                sb.Append($" [CT n={n}");
+                for (int i = 0; i < n && i < 8; i++)
+                {
+                    var c = contacts[i];
+                    sb.Append($" c{i}=(pt=({c.point.x:F2},{c.point.y:F2}),n=({c.normal.x:F2},{c.normal.y:F2}),sep={c.separation:F3})");
+                }
+                sb.Append(']');
+            }
+            return sb.ToString();
+        }
+
+        private static string FormatValue(object v)
+        {
+            if (v == null) return "null";
+            if (v is float f) return f.ToString("F3");
+            if (v is double d) return d.ToString("F3");
+            if (v is Vector2 v2) return $"({v2.x:F3},{v2.y:F3})";
+            if (v is Vector3 v3) return $"({v3.x:F3},{v3.y:F3},{v3.z:F3})";
+            if (v is bool b) return b ? "T" : "F";
+            if (v is int i) return i.ToString();
+            if (v is System.Collections.IEnumerable && !(v is string))
+            {
+                // Skip long collections
+                return "<coll>";
+            }
+            var t = v.GetType();
+            if (!t.IsPrimitive && !t.IsEnum && t != typeof(string))
+            {
+                // For reference types, just show type name (avoid deep serialization)
+                return t.Name;
+            }
+            return v.ToString();
+        }
+
         // Physics
         public static readonly FieldInfo F_body = AccessTools.Field(typeof(Movement), "body");
         public static readonly FieldInfo F_momentum = AccessTools.Field(typeof(Movement), "momentum");
@@ -65,9 +155,17 @@ namespace IGTAPReplay
         /// </summary>
         public struct Snapshot
         {
-            // Transform
+            // Transform position (what Movement.Update reads for raycasts, and what
+            // we write to player.transform.position on restore)
             public Vector2 Position;
+            // Rigidbody2D position (can differ from transform.position after FixedUpdate
+            // integrates velocity / resolves collisions without syncing transform).
+            // This is captured separately and restored to body.position directly so the
+            // body is at EXACTLY the right place it was during recording.
+            public Vector2 BodyPosition;
             public Vector2 Velocity;
+            public float AngularVelocity;
+            public float BodyRotation;
             public Vector2 Momentum;
             public float LastAppliedMomentum;
 
@@ -135,7 +233,10 @@ namespace IGTAPReplay
             return new Snapshot
             {
                 Position = (Vector2)player.transform.position,
+                BodyPosition = body.position,
                 Velocity = body.linearVelocity,
+                AngularVelocity = body.angularVelocity,
+                BodyRotation = body.rotation,
                 Momentum = (Vector2)F_momentum.GetValue(player),
                 LastAppliedMomentum = (float)F_lastAppliedMomentum.GetValue(player),
 
@@ -188,12 +289,22 @@ namespace IGTAPReplay
         {
             var body = (Rigidbody2D)F_body.GetValue(player);
 
-            // Set position on both transform and rigidbody, then force physics sync
+            // Leave body.simulated alone — toggling it destroys the contact cache,
+            // and between synchronous field writes no physics step happens anyway.
+
+            // Temporarily disable interpolation — when enabled, Unity smoothly
+            // tweens transform.position between body.previousPosition and
+            // body.position, causing transform to NOT match what we set.
+            var wasInterp = body.interpolation;
+            body.interpolation = RigidbodyInterpolation2D.None;
+
+            // Set transform first (SyncTransforms will sync transform→body after,
+            // so we set body last to win). They can differ after FixedUpdate.
             var pos = new Vector3(snap.Position.x, snap.Position.y, player.transform.position.z);
             player.transform.position = pos;
-            body.position = snap.Position;
-            Physics2D.SyncTransforms();
+            body.rotation = snap.BodyRotation;
             body.linearVelocity = snap.Velocity;
+            body.angularVelocity = snap.AngularVelocity;
             F_momentum.SetValue(player, snap.Momentum);
             F_lastAppliedMomentum.SetValue(player, snap.LastAppliedMomentum);
 
@@ -242,6 +353,62 @@ namespace IGTAPReplay
 
             // Set facing scale to match
             player.transform.localScale = new Vector3(snap.FacingRight ? 1f : -1f, 1f, 1f);
+
+            body.WakeUp();
+            Plugin.DbgLog($"  RESTORE-INPUT: snap.Position=({snap.Position.x:F4},{snap.Position.y:F4}) snap.BodyPosition=({snap.BodyPosition.x:F4},{snap.BodyPosition.y:F4}) snap.Velocity=({snap.Velocity.x:F4},{snap.Velocity.y:F4})");
+            Plugin.DbgLog($"  RESTORE-STEP-A (after field assigns): body=({body.position.x:F4},{body.position.y:F4}) tr=({player.transform.position.x:F4},{player.transform.position.y:F4})");
+            Physics2D.SyncTransforms();
+            Plugin.DbgLog($"  RESTORE-STEP-B (after SyncTransforms): body=({body.position.x:F4},{body.position.y:F4}) tr=({player.transform.position.x:F4},{player.transform.position.y:F4})");
+            body.position = snap.BodyPosition;
+            Plugin.DbgLog($"  RESTORE-STEP-C (after body.position=): body=({body.position.x:F4},{body.position.y:F4}) tr=({player.transform.position.x:F4},{player.transform.position.y:F4})");
+
+            // Establish contacts at the new position. Without this, Box2D has
+            // no contact cache after a teleport — the next FixedUpdate creates
+            // cold-started contacts that push the body out of penetration
+            // differently than during recording (where contacts had history).
+            // Two zero-time Simulate calls force broadphase + warm-start.
+            var prevMode = Physics2D.simulationMode;
+            if (prevMode != SimulationMode2D.Script)
+                Physics2D.simulationMode = SimulationMode2D.Script;
+            try
+            {
+                Physics2D.Simulate(0f);
+                Physics2D.Simulate(0f);
+            }
+            finally
+            {
+                if (prevMode != SimulationMode2D.Script)
+                    Physics2D.simulationMode = prevMode;
+            }
+            Plugin.DbgLog($"  RESTORE-STEP-D (after Simulate): body=({body.position.x:F4},{body.position.y:F4}) tr=({player.transform.position.x:F4},{player.transform.position.y:F4})");
+            // Re-set position/velocity in case Simulate nudged them
+            body.position = snap.BodyPosition;
+            body.linearVelocity = snap.Velocity;
+            body.interpolation = wasInterp;
+            Plugin.DbgLog($"  RESTORE-STEP-E (final): body=({body.position.x:F4},{body.position.y:F4}) tr=({player.transform.position.x:F4},{player.transform.position.y:F4})");
+
+            // Readback verification: did the values actually take?
+            var readback = Capture(player);
+            bool posOk = Vector2.Distance(readback.Position, snap.Position) < 0.01f;
+            bool bodyPosOk = Vector2.Distance(readback.BodyPosition, snap.BodyPosition) < 0.01f;
+            bool velOk = Vector2.Distance(readback.Velocity, snap.Velocity) < 0.01f;
+            bool momOk = Vector2.Distance(readback.Momentum, snap.Momentum) < 0.01f;
+            bool facOk = readback.FacingRight == snap.FacingRight;
+            bool wjdOk = Mathf.Abs(readback.WallJumpDirection - snap.WallJumpDirection) < 0.01f;
+            bool wjlOk = Mathf.Abs(readback.WallJumpMovementLockRemaining - snap.WallJumpMovementLockRemaining) < 0.01f;
+            if (!posOk || !bodyPosOk || !velOk || !momOk || !facOk || !wjdOk || !wjlOk)
+            {
+                Plugin.Log.LogError($"RESTORE READBACK MISMATCH:");
+                if (!posOk) Plugin.Log.LogError($"  transform.pos: wrote {snap.Position}, read {readback.Position}");
+                if (!bodyPosOk) Plugin.Log.LogError($"  body.pos: wrote {snap.BodyPosition}, read {readback.BodyPosition}");
+                if (!velOk) Plugin.Log.LogError($"  vel: wrote {snap.Velocity}, read {readback.Velocity}");
+                if (!momOk) Plugin.Log.LogError($"  mom: wrote {snap.Momentum}, read {readback.Momentum}");
+                if (!facOk) Plugin.Log.LogError($"  facingRight: wrote {snap.FacingRight}, read {readback.FacingRight}");
+                if (!wjdOk) Plugin.Log.LogError($"  wallJumpDir: wrote {snap.WallJumpDirection}, read {readback.WallJumpDirection}");
+                if (!wjlOk) Plugin.Log.LogError($"  wallJumpLock: wrote {snap.WallJumpMovementLockRemaining}, read {readback.WallJumpMovementLockRemaining}");
+            }
+            Plugin.DbgLog($"Restore readback: transformPos={posOk} bodyPos={bodyPosOk} vel={velOk} mom={momOk} fac={facOk} wjd={wjdOk} wjl={wjlOk} bodyType={body.bodyType} gravScale={body.gravityScale} simulated={body.simulated} interp={body.interpolation}");
+            Plugin.DbgLog($"  POST-RESTORE-IMMEDIATE: body.pos=({body.position.x:F4},{body.position.y:F4}) transform.pos=({player.transform.position.x:F4},{player.transform.position.y:F4})");
         }
     }
 }

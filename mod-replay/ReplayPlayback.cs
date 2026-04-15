@@ -51,6 +51,16 @@ namespace IGTAPReplay
         // Checkpoint validation index
         private int checkpointIndex;
 
+        // --- Reverify state (see BeginReverifyFromFrame) ---
+        private bool reverifying;
+        private int reverifyDirtyFrame; // first frame where edits diverge
+        private int reverifyCaptureEveryN = 50; // default: every second at 50fps
+        private int reverifyLastCapturedFrame = -1;
+        public bool IsReverifying => reverifying;
+
+        // (post-restore contact cache correction is handled at the physics level
+        // in ReplayState.Restore via double Physics2D.Simulate(0) calls)
+
         // Saved binding overrides for ALL actions, to restore on stop
         private readonly Dictionary<System.Guid, List<string>> savedOverrides = new Dictionary<System.Guid, List<string>>();
 
@@ -80,9 +90,23 @@ namespace IGTAPReplay
             if (skipNextMovementUpdate)
             {
                 skipNextMovementUpdate = false;
+                // Restore right before the first frame runs — no gap for Unity's
+                // physics engine to drift the Rigidbody2D (gravity, collisions, etc.)
+                // between restore and the first Movement.Update.
                 RestoreCheckpointBefore(0);
-                Plugin.DbgLog("ShouldMovementUpdate: SKIPPED + re-restored (startup frame)");
-                return false;
+
+                if (Time.deltaTime == 0f)
+                {
+                    // dt=0 on the startup frame (timeScale change not yet in effect).
+                    // Movement.Update would be a no-op, so skip — but we MUST re-arm
+                    // the skip so the restore + run happens on the next frame instead.
+                    skipNextMovementUpdate = true;
+                    Plugin.DbgLog("ShouldMovementUpdate: restored but dt=0, re-arming skip");
+                    return false;
+                }
+
+                Plugin.DbgLog("ShouldMovementUpdate: restored initial state, proceeding with frame 1");
+                return true; // bypass all other checks — first frame MUST run
             }
 
             // Execute pending unpause HERE, at the exact right lifecycle point.
@@ -186,6 +210,7 @@ namespace IGTAPReplay
         {
             if (!playing) return;
             playing = false;
+            reverifying = false;
 
             // Clear device state and remove
             if (virtualKeyboard != null)
@@ -323,6 +348,9 @@ namespace IGTAPReplay
                 return;
             }
 
+            // FULL state dump at PREFIX ENTRY — what FixedUpdate left us with
+            Plugin.DbgLog($"PLAY-PRE-ENTRY fc={frameCounter + 1} dt={Time.deltaTime:F4} :: {ReplayState.DumpAllFields(player)}");
+
             frameCounter++;
             AdvanceSpanIndex();
             InjectForFrame(frameCounter);
@@ -337,15 +365,97 @@ namespace IGTAPReplay
             var moveVal = moveAct.ReadValue<Vector2>();
             Plugin.DbgLog($"InjectCurrentFrame fc={frameCounter} seeking={seeking} seekTarget={seekTarget} paused={paused} timeScale={Time.timeScale} dt={Time.deltaTime:F4} moveVal=({moveVal.x:F1},{moveVal.y:F1}) xma={replayFile.Spans[spanIndex].XMoveAxis}");
 
+            // FULL state dump AFTER input injection — what Movement.Update will actually see
+            Plugin.DbgLog($"PLAY-PRE fc={frameCounter} :: {ReplayState.DumpAllFields(player)}");
+        }
 
-            // Validate checkpoints HERE (in the prefix, before Movement runs) —
-            // because checkpoints were captured in the prefix during recording.
-            // Skip frame 1 since the startup frame skip causes a known 1-frame offset.
-            if (frameCounter > 1)
+        /// <summary>
+        /// Begin an uninterruptible re-verify pass: seek to the nearest surviving
+        /// checkpoint at or before <paramref name="fromFrame"/>, then run normal
+        /// playback to the end of the replay while appending fresh checkpoints
+        /// and verify points. All user controls must be locked by the editor
+        /// for the duration.
+        /// </summary>
+        public void BeginReverifyFromFrame(int fromFrame)
+        {
+            if (!playing || player == null || replayFile == null) return;
+
+            // Derive capture cadence from the spacing of surviving checkpoints.
+            // If we have at least two, use their average gap. Otherwise default
+            // to one per second. Clamp to [1, 600].
+            int cadence = 50;
+            var cps = replayFile.Checkpoints;
+            if (cps.Count >= 2)
             {
-                CheckVerifyPoints();
-                ValidateCheckpoints();
+                int sum = 0;
+                int n = 0;
+                for (int i = 1; i < cps.Count; i++)
+                {
+                    int d = cps[i].Frame - cps[i - 1].Frame;
+                    if (d > 0) { sum += d; n++; }
+                }
+                if (n > 0) cadence = Mathf.Clamp(sum / n, 1, 600);
             }
+            reverifyCaptureEveryN = cadence;
+            reverifyLastCapturedFrame = -1;
+            reverifyDirtyFrame = fromFrame;
+
+            // Always re-verify from the very beginning of the replay so that
+            // ALL checkpoints and verify points are regenerated consistently.
+            finished = false;
+            RestoreCheckpointBefore(0);
+
+            reverifying = true;
+            seeking = false;
+            seekTarget = 0;
+            paused = false;
+            PauseOnFrame = 0;
+            Time.timeScale = 1f;
+            Plugin.DbgLog($"BeginReverifyFromFrame fromFrame={fromFrame} cadence={cadence}");
+        }
+
+        /// <summary>
+        /// Called from InjectCurrentFrame while reverifying. Appends a checkpoint
+        /// and verify point at the configured cadence.
+        /// </summary>
+        private void CaptureReverifyPoints()
+        {
+            if (reverifyLastCapturedFrame < 0 ||
+                frameCounter - reverifyLastCapturedFrame >= reverifyCaptureEveryN)
+            {
+                reverifyLastCapturedFrame = frameCounter;
+
+                var cp = new ReplayCheckpoint
+                {
+                    Frame = frameCounter,
+                    SpanIndex = spanIndex,
+                    State = ReplayState.Capture(player),
+                };
+                replayFile.Checkpoints.Add(cp);
+
+                var body = (Rigidbody2D)ReplayState.F_body.GetValue(player);
+                replayFile.VerifyPoints.Add(new VerifyPoint
+                {
+                    Frame = frameCounter,
+                    Position = player.transform.position,
+                    Velocity = body.linearVelocity,
+                });
+            }
+        }
+
+        /// <summary>
+        /// Called from PostMovementUpdate when reverify reaches end-of-replay.
+        /// </summary>
+        private void EndReverify()
+        {
+            reverifying = false;
+            paused = true;
+            Time.timeScale = 0f;
+            Plugin.DbgLog($"EndReverify fc={frameCounter} cp.Count={replayFile.Checkpoints.Count} vp.Count={replayFile.VerifyPoints.Count}");
+
+            var editor = FindAnyObjectByType<ReplayEditor>();
+            if (editor != null)
+                editor.OnReverifyComplete();
         }
 
         /// <summary>
@@ -360,6 +470,28 @@ namespace IGTAPReplay
                 Plugin.DbgLog($"PostMovementUpdate SKIPPED fc={frameCounter} seeking={seeking} finished={finished} paused={paused}");
                 return;
             }
+
+            // FULL state dump at POSTFIX ENTRY — what Movement.Update produced
+            Plugin.DbgLog($"PLAY-POST fc={frameCounter} :: {ReplayState.DumpAllFields(player)}");
+
+            // Validate checkpoints and capture reverify points AFTER Movement.Update
+            // ran — this is the deterministic point, matching where recording captures them.
+            if (frameCounter > 1)
+            {
+                if (reverifying && frameCounter < reverifyDirtyFrame)
+                {
+                    CheckVerifyPoints();
+                    ValidateCheckpointsStrict();
+                }
+                else if (!reverifying)
+                {
+                    CheckVerifyPoints();
+                    ValidateCheckpoints();
+                }
+            }
+
+            if (reverifying && frameCounter >= reverifyDirtyFrame)
+                CaptureReverifyPoints();
 
             // Reached seek target — pause immediately (including timeScale)
             if (seeking && frameCounter >= seekTarget)
@@ -407,9 +539,19 @@ namespace IGTAPReplay
                 seeking = false;
                 finished = true;
                 paused = true;
-                Plugin.DbgLog($"PostMovementUpdate END OF REPLAY fc={frameCounter}");
+                Plugin.DbgLog($"PostMovementUpdate END OF REPLAY fc={frameCounter} reverifying={reverifying}");
                 Log.LogInfo($"Playback reached end at frame {frameCounter}.");
-                Plugin.Instance.OnPlaybackFinished();
+
+                if (reverifying)
+                {
+                    // End-of-replay during reverify: finalize the pass instead of
+                    // tearing down playback. The editor will unlock controls.
+                    EndReverify();
+                }
+                else
+                {
+                    Plugin.Instance.OnPlaybackFinished();
+                }
             }
         }
 
@@ -491,11 +633,14 @@ namespace IGTAPReplay
                     var expected = cp.State;
 
                     float posDelta = Vector2.Distance(actual.Position, expected.Position);
+                    float bodyPosDelta = Vector2.Distance(actual.BodyPosition, expected.BodyPosition);
                     float velDelta = Vector2.Distance(actual.Velocity, expected.Velocity);
                     float momDelta = Vector2.Distance(actual.Momentum, expected.Momentum);
 
                     if (posDelta > 0.5f)
-                        Log.LogWarning($"CHECKPOINT MISMATCH frame {cp.Frame}: pos delta={posDelta:F2} (expected {expected.Position}, got {actual.Position})");
+                        Log.LogWarning($"CHECKPOINT MISMATCH frame {cp.Frame}: transform.pos delta={posDelta:F2} (expected {expected.Position}, got {actual.Position})");
+                    if (bodyPosDelta > 0.5f)
+                        Log.LogWarning($"CHECKPOINT MISMATCH frame {cp.Frame}: body.pos delta={bodyPosDelta:F2} (expected {expected.BodyPosition}, got {actual.BodyPosition})");
                     if (velDelta > 5f)
                         Log.LogWarning($"CHECKPOINT MISMATCH frame {cp.Frame}: vel delta={velDelta:F2} (expected {expected.Velocity}, got {actual.Velocity})");
                     if (momDelta > 1f)
@@ -510,6 +655,62 @@ namespace IGTAPReplay
                         Log.LogWarning($"CHECKPOINT MISMATCH frame {cp.Frame}: dashActive expected={expected.DashActive} got={actual.DashActive}");
                     if (actual.CutsceneMode != expected.CutsceneMode)
                         Log.LogWarning($"CHECKPOINT MISMATCH frame {cp.Frame}: cutsceneMode expected={expected.CutsceneMode} got={actual.CutsceneMode}");
+                }
+                checkpointIndex++;
+            }
+        }
+
+        /// <summary>
+        /// Strict checkpoint validation used during reverify for frames BEFORE the
+        /// dirty frame. These checkpoints survived InvalidateDownstream and must
+        /// match exactly — a mismatch means non-deterministic replay, which is fatal.
+        /// </summary>
+        private void ValidateCheckpointsStrict()
+        {
+            var cps = replayFile.Checkpoints;
+            while (checkpointIndex < cps.Count && cps[checkpointIndex].Frame <= frameCounter)
+            {
+                var cp = cps[checkpointIndex];
+                if (cp.Frame == frameCounter)
+                {
+                    var actual = ReplayState.Capture(player);
+                    var expected = cp.State;
+
+                    float posDelta = Vector2.Distance(actual.Position, expected.Position);
+                    float bodyPosDelta = Vector2.Distance(actual.BodyPosition, expected.BodyPosition);
+                    float velDelta = Vector2.Distance(actual.Velocity, expected.Velocity);
+                    float momDelta = Vector2.Distance(actual.Momentum, expected.Momentum);
+
+                    var errors = new System.Text.StringBuilder();
+                    if (posDelta > 0.01f)
+                        errors.AppendLine($"  transform.pos delta={posDelta:F4} (expected {expected.Position}, got {actual.Position})");
+                    if (bodyPosDelta > 0.01f)
+                        errors.AppendLine($"  body.pos delta={bodyPosDelta:F4} (expected {expected.BodyPosition}, got {actual.BodyPosition})");
+                    if (velDelta > 0.01f)
+                        errors.AppendLine($"  vel delta={velDelta:F4} (expected {expected.Velocity}, got {actual.Velocity})");
+                    if (momDelta > 0.01f)
+                        errors.AppendLine($"  momentum delta={momDelta:F4} (expected {expected.Momentum}, got {actual.Momentum})");
+                    if (actual.OnGround != expected.OnGround)
+                        errors.AppendLine($"  onGround expected={expected.OnGround} got={actual.OnGround}");
+                    if (actual.OnWall != expected.OnWall)
+                        errors.AppendLine($"  onWall expected={expected.OnWall} got={actual.OnWall}");
+                    if (actual.AirDashesLeft != expected.AirDashesLeft)
+                        errors.AppendLine($"  airDashesLeft expected={expected.AirDashesLeft} got={actual.AirDashesLeft}");
+                    if (actual.DashActive != expected.DashActive)
+                        errors.AppendLine($"  dashActive expected={expected.DashActive} got={actual.DashActive}");
+                    if (actual.CutsceneMode != expected.CutsceneMode)
+                        errors.AppendLine($"  cutsceneMode expected={expected.CutsceneMode} got={actual.CutsceneMode}");
+
+                    if (errors.Length > 0)
+                    {
+                        string msg = $"FATAL: Pre-dirty checkpoint diverged at frame {cp.Frame} " +
+                            $"(dirty starts at {reverifyDirtyFrame}). Replay is non-deterministic!\n{errors}";
+                        Log.LogError(msg);
+                        reverifying = false;
+                        paused = true;
+                        Time.timeScale = 0f;
+                        throw new System.Exception(msg);
+                    }
                 }
                 checkpointIndex++;
             }

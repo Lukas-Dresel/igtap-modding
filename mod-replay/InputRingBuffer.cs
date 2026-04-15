@@ -98,15 +98,12 @@ namespace IGTAPReplay
 
             timestep = Time.captureFramerate > 0 ? Time.captureFramerate : 50;
 
-            var initialState = ReplayState.Capture(player);
             currentBindings = CaptureBindings(player, 0);
 
-            checkpoints.Add(new ReplayCheckpoint
-            {
-                Frame = 0,
-                SpanIndex = 0,
-                State = initialState,
-            });
+            // No frame-0 checkpoint here — the first checkpoint is captured in
+            // OnPostFrame after the first Movement.Update runs (frame 1). This
+            // ensures all checkpoints are at the same lifecycle point (post-
+            // Movement.Update), making playback deterministic.
 
             running = true;
             Log.LogInfo("Ring buffer started.");
@@ -134,11 +131,8 @@ namespace IGTAPReplay
             if (!running || player != trackedPlayer) return;
 
             headFrame++;
-            if (headFrame <= 3)
-            {
-                var body = (Rigidbody2D)ReplayState.F_body.GetValue(player);
-                Plugin.DbgLog($"BUF OnFrame fc={headFrame} dt={Time.deltaTime:F4} vel=({body.linearVelocityX:F1},{body.linearVelocityY:F1}) pos=({body.position.x:F1},{body.position.y:F1})");
-            }
+            // FULL PREFIX STATE DUMP (recording) — what FixedUpdate left + what Movement.Update is about to see
+            Plugin.DbgLog($"REC-PRE fc={headFrame} dt={Time.deltaTime:F4} :: {ReplayState.DumpAllFields(player)}");
 
             var keyboard = Keyboard.current;
             var mouse = Mouse.current;
@@ -246,6 +240,21 @@ namespace IGTAPReplay
                 prevKeys = currentKeys;
             }
 
+            // Checkpoint + verify capture moved to OnPostFrame (called from postfix).
+        }
+
+        /// <summary>
+        /// Called from Harmony postfix on Movement.Update, after the game processed input.
+        /// Captures checkpoints and verify points at this deterministic point —
+        /// after Movement.Update but before FixedUpdate modifies physics state.
+        /// </summary>
+        public void OnPostFrame(Movement player)
+        {
+            if (!running || player != trackedPlayer) return;
+
+            // FULL POSTFIX STATE DUMP (recording) — what Movement.Update produced
+            Plugin.DbgLog($"REC-POST fc={headFrame} :: {ReplayState.DumpAllFields(player)}");
+
             // Verification point every 50 frames
             if (headFrame % 50 == 0)
             {
@@ -258,25 +267,37 @@ namespace IGTAPReplay
                 });
             }
 
-            // Checkpoint: every second + every input change, or every frame in debug mode
+            // Checkpoint: first frame (initial state), every second, every input
+            // change, every frame in debug mode, or any pending snapshot request
+            // from external triggers (course boundaries, etc.).
+            bool isFirstFrame = checkpoints.Count == 0;
             bool isSecondBoundary = headFrame % (timestep > 0 ? timestep : 50) == 0;
-            if (Plugin.PerFrameCheckpoints.Value || isSecondBoundary || keysChanged)
+            if (isFirstFrame || Plugin.PerFrameCheckpoints.Value || isSecondBoundary || keysChanged || snapshotPending)
             {
                 CaptureCheckpoint(player);
             }
+            snapshotPending = false;
 
             // Trim old data
             Trim();
         }
 
+        // Set when a CaptureSnapshot is requested mid-frame. Consumed by
+        // OnPostFrame so the actual capture happens at the canonical post-
+        // Movement.Update lifecycle point — same as every other checkpoint.
+        private bool snapshotPending;
+
         /// <summary>
-        /// Force a full state checkpoint at the current frame.
-        /// Called on course start/stop events for exact state at boundaries.
+        /// Request a full state checkpoint at the next frame boundary.
+        /// Called on course start/stop events to ensure a checkpoint exists at
+        /// the boundary frame, but the actual capture is deferred to the
+        /// post-Movement.Update lifecycle point so the state matches what
+        /// every other checkpoint captures (avoids duplicate-frame divergence).
         /// </summary>
         public void CaptureSnapshot(Movement player)
         {
             if (!running || player != trackedPlayer) return;
-            CaptureCheckpoint(player);
+            snapshotPending = true;
         }
 
         /// <summary>
@@ -468,12 +489,38 @@ namespace IGTAPReplay
             {
                 if (spans[i].Frame <= headFrame) { si = i; break; }
             }
-            checkpoints.Add(new ReplayCheckpoint
+            var newCp = new ReplayCheckpoint
             {
                 Frame = headFrame,
                 SpanIndex = si,
                 State = ReplayState.Capture(player),
-            });
+            };
+
+            // Defense in depth: if the LAST checkpoint is at the same frame,
+            // the new state MUST match the existing one (since both should
+            // represent the canonical end-of-frame state). If they differ,
+            // it means something is calling CaptureCheckpoint from a non-
+            // post-Movement.Update lifecycle point and we have a bug.
+            if (checkpoints.Count > 0 && checkpoints[checkpoints.Count - 1].Frame == headFrame)
+            {
+                var existing = checkpoints[checkpoints.Count - 1].State;
+                bool posMatch = Vector2.Distance(existing.Position, newCp.State.Position) < 0.01f;
+                bool bodyMatch = Vector2.Distance(existing.BodyPosition, newCp.State.BodyPosition) < 0.01f;
+                bool velMatch = Vector2.Distance(existing.Velocity, newCp.State.Velocity) < 0.01f;
+                if (!posMatch || !bodyMatch || !velMatch)
+                {
+                    var stack = new System.Diagnostics.StackTrace(1, true);
+                    Log.LogError($"DUPLICATE CHECKPOINT DIVERGENCE at frame {headFrame}: " +
+                                 $"existing pos={existing.Position} body={existing.BodyPosition} vel={existing.Velocity}, " +
+                                 $"new pos={newCp.State.Position} body={newCp.State.BodyPosition} vel={newCp.State.Velocity}\n" +
+                                 $"Stack:\n{stack}");
+                }
+                // Replace existing with new — both should be at end-of-frame state
+                checkpoints[checkpoints.Count - 1] = newCp;
+                return;
+            }
+
+            checkpoints.Add(newCp);
         }
 
         private void Trim()

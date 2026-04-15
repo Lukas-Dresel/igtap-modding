@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -21,6 +22,23 @@ namespace IGTAPReplay
 
         // Replay data (for timeline + precomputed ghosts)
         private ReplayFile replayFile;
+
+        /// <summary>Path the replay was originally loaded from. Set by Plugin.PlayFile
+        /// before BeginReplay. Needed by edit-session Save-As.</summary>
+        public string OriginalLoadPath;
+
+        // --- TAS edit mode ---
+        private ReplayEditSession editSession;
+        private bool editMode;
+        private EditScope editScope = EditScope.FromHere;
+        private bool pickerOpen;
+        private string pickerFilter = "";
+        private Vector2 pickerScroll;
+        private bool captureBoxFocused;
+        private string captureBoxFeedback; // shown briefly after a capture
+        private float captureBoxFeedbackEndTime;
+        private const int CaptureBoxControlId = 0x7A5E; // arbitrary stable ID
+        private const float EditPanelHeight = 170f;
 
         // Ghost markers (live, for recording)
         private readonly List<GhostMarker> liveMarkers = new List<GhostMarker>();
@@ -123,9 +141,63 @@ namespace IGTAPReplay
                 Resume();
             ClearLiveMarkers();
             ClearReplayMarkers();
+            editMode = false;
+            editSession = null;
+            pickerOpen = false;
             player = null;
             replayFile = null;
+            OriginalLoadPath = null;
             editorMode = EditorMode.None;
+        }
+
+        // ===========================
+        // TAS EDIT MODE LIFECYCLE
+        // ===========================
+
+        public bool IsEditMode => editMode;
+
+        private void BeginEditMode()
+        {
+            if (editorMode != EditorMode.Replay || player == null || replayFile == null)
+                return;
+            if (string.IsNullOrEmpty(OriginalLoadPath))
+            {
+                Plugin.Instance?.ShowToast("Edit mode needs a loaded replay path");
+                return;
+            }
+
+            // Ensure we're paused so the user can see what they're editing.
+            if (!paused) Pause();
+
+            editSession = new ReplayEditSession(replayFile, OriginalLoadPath, player);
+            editMode = true;
+            pickerOpen = false;
+            captureBoxFeedback = null;
+            Plugin.Instance?.ShowToast("Edit mode ON");
+            Plugin.DbgLog($"BeginEditMode path={OriginalLoadPath}");
+        }
+
+        private void EndEditMode()
+        {
+            if (!editMode) return;
+            editMode = false;
+            editSession = null;
+            pickerOpen = false;
+            captureBoxFocused = false;
+            Plugin.Instance?.ShowToast("Edit mode OFF");
+            Plugin.DbgLog("EndEditMode");
+        }
+
+        /// <summary>
+        /// Called from ReplayPlayback when a reverify pass finishes. Clears the
+        /// dirty flag on the edit session and allows the editor to relayout.
+        /// </summary>
+        public void OnReverifyComplete()
+        {
+            editSession?.MarkCleanAfterReverify();
+            PrecomputeReplayGhosts();
+            Plugin.Instance?.ShowToast("Re-verify complete");
+            Plugin.DbgLog("Editor.OnReverifyComplete");
         }
 
         // --- Update ---
@@ -134,9 +206,20 @@ namespace IGTAPReplay
         {
             if (player == null || editorMode == EditorMode.None) return;
 
+            var playback = FindAnyObjectByType<ReplayPlayback>();
+
+            // While reverifying, lock out ALL user controls (hotkeys + step).
+            // The reverify pass is uninterruptible by design.
+            if (playback != null && playback.IsReverifying)
+            {
+                // Ensure our internal paused state matches playback's live state:
+                // during reverify, playback is running, so we're not paused.
+                if (paused) { paused = false; }
+                return;
+            }
+
             if (editorMode == EditorMode.Replay)
             {
-                var playback = FindAnyObjectByType<ReplayPlayback>();
                 if (playback != null)
                 {
                     if (pendingStepTarget > 0)
@@ -172,7 +255,7 @@ namespace IGTAPReplay
                 }
 
                 if (paused)
-                    HandleStepping();
+                    HandleStepping(playback);
             }
             catch (System.InvalidOperationException)
             {
@@ -226,7 +309,7 @@ namespace IGTAPReplay
             Plugin.Instance.ShowToast("Resumed");
         }
 
-        private void HandleStepping()
+        private void HandleStepping(ReplayPlayback playback)
         {
             bool stepForward = Input.GetKeyDown(KeyCode.RightArrow);
             bool stepBackward = Input.GetKeyDown(KeyCode.LeftArrow);
@@ -244,13 +327,13 @@ namespace IGTAPReplay
                 if (stepBackward) { stepBackward = false; stepSecBack = true; }
             }
 
-            var playback = FindAnyObjectByType<ReplayPlayback>();
             int timestep = replayFile?.Timestep ?? 50;
+            int fc = playback != null ? playback.FrameCount : -1;
 
-            if (stepForward) StepFrames(1);
-            else if (stepSecFwd) StepFrames(timestep);
-            else if (stepBackward) StepFrames(-1);
-            else if (stepSecBack) StepFrames(-timestep);
+            if (stepForward) { Plugin.DbgLog($"KEY: step fwd +1 frame (fc={fc})"); StepFrames(1); }
+            else if (stepSecFwd) { Plugin.DbgLog($"KEY: step fwd +1s/{timestep} frames (fc={fc})"); StepFrames(timestep); }
+            else if (stepBackward) { Plugin.DbgLog($"KEY: step back -1 frame (fc={fc})"); StepFrames(-1); }
+            else if (stepSecBack) { Plugin.DbgLog($"KEY: step back -1s/{timestep} frames (fc={fc})"); StepFrames(-timestep); }
         }
 
         // ===========================
@@ -548,6 +631,15 @@ namespace IGTAPReplay
             if (editorMode == EditorMode.Replay)
                 DrawTimeline();
 
+            // TAS edit panel (only while paused and editing)
+            if (editorMode == EditorMode.Replay && editMode && paused)
+                DrawEditPanel();
+
+            // Reverify overlay — replaces transport + edit panel while the pass runs.
+            var pb = FindAnyObjectByType<ReplayPlayback>();
+            if (pb != null && pb.IsReverifying)
+                DrawReverifyOverlay(pb);
+
             // Ghost labels (live, during recording)
             if (liveLabels.Count > 0)
                 DrawLiveLabels();
@@ -556,8 +648,8 @@ namespace IGTAPReplay
             if (editorMode == EditorMode.Replay && Plugin.ReplayGhostsEnabled.Value)
                 DrawReplayGhostLabels();
 
-            // Paused banner
-            if (paused)
+            // Paused banner (suppress during edit mode — the edit panel has its own header)
+            if (paused && !editMode)
                 DrawPausedBanner();
         }
 
@@ -840,6 +932,7 @@ namespace IGTAPReplay
                                   int frameStart, float totalFrames, ReplayPlayback playback)
         {
             if (playback == null || editorMode != EditorMode.Replay) return;
+            if (playback.IsReverifying) return;
 
             Event e = Event.current;
             Vector2 mousePos = e.mousePosition;
@@ -849,6 +942,7 @@ namespace IGTAPReplay
             {
                 isScrubbing = true;
                 if (!paused) Pause();
+                Plugin.DbgLog($"SCRUB: started at mouse x={mousePos.x:F0}");
                 e.Use();
             }
 
@@ -858,6 +952,7 @@ namespace IGTAPReplay
                 int targetFrame = frameStart + Mathf.RoundToInt(frac * totalFrames);
                 targetFrame = Mathf.Max(1, targetFrame);
 
+                Plugin.DbgLog($"SCRUB: seek to frame {targetFrame}");
                 paused = false;
                 Time.timeScale = savedTimeScale;
                 playback.SeekToFrame(targetFrame);
@@ -866,6 +961,7 @@ namespace IGTAPReplay
 
             if (isScrubbing && e.type == EventType.MouseUp && e.button == 0)
             {
+                Plugin.DbgLog($"SCRUB: ended at fc={playback.FrameCount}");
                 isScrubbing = false;
                 e.Use();
             }
@@ -883,6 +979,7 @@ namespace IGTAPReplay
             float speedBtnW = 40f;
 
             float exitBtnW = 44f;
+            float editBtnW = 50f;
 
             // Calculate total width of controls to center them
             float controlsWidth = btnW * 5 + gap * 4       // 5 buttons + gaps
@@ -891,6 +988,8 @@ namespace IGTAPReplay
                 + SpeedOptions.Length * (speedBtnW + 2f)      // speed buttons
                 + gap * 3                                     // spacer before toggle
                 + 100f                                        // toggle
+                + gap * 3                                     // spacer before edit
+                + editBtnW                                    // edit button
                 + gap * 3                                     // spacer before exit
                 + exitBtnW;                                   // exit button
 
@@ -963,8 +1062,23 @@ namespace IGTAPReplay
                 new Rect(x, barY + 4, toggleW, btnH - 4),
                 fullTl, "Full timeline");
             if (newFull != fullTl)
+            {
+                Plugin.DbgLog($"BTN: Full timeline toggled to {newFull}");
                 Plugin.TimelineFullReplay.Value = newFull;
+            }
             x += toggleW + gap * 3;
+
+            // Edit mode toggle
+            var prevEditBg = GUI.backgroundColor;
+            if (editMode) GUI.backgroundColor = new Color(1f, 0.8f, 0.2f);
+            if (GUI.Button(new Rect(x, barY, editBtnW, btnH), editMode ? "Edit*" : "Edit"))
+            {
+                Plugin.DbgLog($"BTN: Edit (was={editMode})");
+                if (editMode) EndEditMode();
+                else BeginEditMode();
+            }
+            GUI.backgroundColor = prevEditBg;
+            x += editBtnW + gap * 3;
 
             // Exit replay
             var prevExitBg = GUI.backgroundColor;
@@ -1082,6 +1196,551 @@ namespace IGTAPReplay
             tex.SetPixels(pix);
             tex.Apply();
             return tex;
+        }
+
+        // ===========================
+        // TAS EDIT PANEL
+        // ===========================
+
+        private void DrawEditPanel()
+        {
+            if (editSession == null) return;
+
+            var playback = FindAnyObjectByType<ReplayPlayback>();
+            if (playback == null) return;
+
+            int currentFrame = playback.FrameCount;
+            int timestep = replayFile?.Timestep ?? 50;
+
+            // Panel layout: above the transport controls
+            float panelW = Mathf.Min(Screen.width - TimelinePadding * 2, 760f);
+            float panelX = (Screen.width - panelW) / 2f;
+            float panelY = Screen.height - TimelineHeight - TimelinePadding - TransportHeight - 2f - EditPanelHeight - 6f;
+            float panelH = EditPanelHeight;
+
+            EnsureTimelineStyles();
+            GUI.DrawTexture(new Rect(panelX, panelY, panelW, panelH), timelineBgTex);
+
+            // Border to distinguish from timeline
+            DrawBorder(new Rect(panelX, panelY, panelW, panelH), new Color(1f, 0.8f, 0.2f, 0.9f));
+
+            // Header
+            var headerStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 12,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleLeft,
+            };
+            headerStyle.normal.textColor = Color.white;
+            string header = $"EDIT  •  Frame {currentFrame}  •  Spans {replayFile.Spans.Count}";
+            if (editSession.IsDirty) header += $"  •  \u25CF DIRTY (from {editSession.DirtyFromFrame})";
+            GUI.Label(new Rect(panelX + 10, panelY + 6, panelW - 20, 18), header, headerStyle);
+
+            // Held keys list (top-left area)
+            var heldKeys = editSession.GetKeysAtFrame(currentFrame);
+            DrawHeldKeysList(panelX + 10, panelY + 28, 260, panelH - 38, heldKeys, currentFrame);
+
+            // Capture box + add-key picker (middle area)
+            DrawCaptureAndPicker(panelX + 280, panelY + 28, 220, panelH - 38, heldKeys, currentFrame);
+
+            // Right-side controls (scope + undo/redo/reverify/save/discard)
+            DrawEditControls(panelX + 510, panelY + 28, panelW - 520, panelH - 38, playback, currentFrame);
+
+            // Transient capture feedback toast (centered under the panel)
+            if (!string.IsNullOrEmpty(captureBoxFeedback) && Time.unscaledTime < captureBoxFeedbackEndTime)
+            {
+                var toastStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 11,
+                    alignment = TextAnchor.MiddleCenter,
+                };
+                toastStyle.normal.textColor = new Color(0.6f, 1f, 0.6f);
+                GUI.Label(new Rect(panelX, panelY + panelH - 16, panelW, 14), captureBoxFeedback, toastStyle);
+            }
+        }
+
+        private void DrawHeldKeysList(float x, float y, float w, float h,
+                                       HashSet<string> heldKeys, int currentFrame)
+        {
+            var labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 11 };
+            labelStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
+            GUI.Label(new Rect(x, y, w, 14), "Held keys at playhead:", labelStyle);
+
+            float rowY = y + 18;
+            float rowH = 20;
+            if (heldKeys.Count == 0)
+            {
+                var emptyStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, fontStyle = FontStyle.Italic };
+                emptyStyle.normal.textColor = new Color(0.6f, 0.6f, 0.6f);
+                GUI.Label(new Rect(x, rowY, w, 18), "(none — span is empty)", emptyStyle);
+                return;
+            }
+
+            var sorted = heldKeys.OrderBy(k => KeyNames.ToShortName(k)).ToList();
+            foreach (var keyPath in sorted)
+            {
+                if (rowY + rowH > y + h) break;
+                string name = KeyNames.ToShortName(keyPath);
+                GUI.Label(new Rect(x, rowY, w - 28, rowH), "  " + name, labelStyle);
+                var prevBg = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(0.7f, 0.3f, 0.3f);
+                if (GUI.Button(new Rect(x + w - 24, rowY + 1, 22, rowH - 2), "x"))
+                {
+                    Plugin.DbgLog($"BTN: Remove key '{KeyNames.ToShortName(keyPath)}' at frame {currentFrame} scope={editScope}");
+                    var newSet = new HashSet<string>(heldKeys);
+                    newSet.Remove(keyPath);
+                    editSession.SetHeldKeysAt(currentFrame, newSet, editScope);
+                    PrecomputeReplayGhosts();
+                }
+                GUI.backgroundColor = prevBg;
+                rowY += rowH;
+            }
+        }
+
+        private void DrawCaptureAndPicker(float x, float y, float w, float h,
+                                           HashSet<string> heldKeys, int currentFrame)
+        {
+            var labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 11 };
+            labelStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
+            GUI.Label(new Rect(x, y, w, 14), "Add key:", labelStyle);
+
+            float rowY = y + 18;
+
+            // Press-to-capture box (focusable). Click to focus, then press any key.
+            float boxH = 28f;
+            var boxRect = new Rect(x, rowY, w, boxH);
+
+            // Draw background
+            GUI.DrawTexture(boxRect, timelineBgTex);
+            Color borderCol = captureBoxFocused ? new Color(0.3f, 0.9f, 1f) : new Color(0.4f, 0.4f, 0.4f);
+            DrawBorder(boxRect, borderCol);
+
+            // Focus detection via mouse click
+            if (Event.current.type == EventType.MouseDown &&
+                Event.current.button == 0 &&
+                boxRect.Contains(Event.current.mousePosition))
+            {
+                captureBoxFocused = true;
+                GUI.FocusControl(null); // drop any text field focus
+                Event.current.Use();
+            }
+            else if (Event.current.type == EventType.MouseDown && !boxRect.Contains(Event.current.mousePosition))
+            {
+                captureBoxFocused = false;
+            }
+
+            var boxLabel = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                alignment = TextAnchor.MiddleCenter,
+                fontStyle = captureBoxFocused ? FontStyle.Bold : FontStyle.Normal,
+            };
+            boxLabel.normal.textColor = captureBoxFocused
+                ? new Color(0.3f, 0.9f, 1f)
+                : new Color(0.7f, 0.7f, 0.7f);
+            GUI.Label(boxRect, captureBoxFocused
+                ? "Press any key to add…"
+                : "Click, then press a key", boxLabel);
+
+            // Handle KeyDown / MouseDown events while focused (swallowed so they
+            // don't leak to the game). Mouse-button capture only fires on OUR box,
+            // not on a general mouse-down — to keep click-outside-to-unfocus working.
+            if (captureBoxFocused && Event.current.type == EventType.KeyDown &&
+                Event.current.keyCode != KeyCode.None)
+            {
+                string path = KeyCodeToInputPath(Event.current.keyCode);
+                if (path != null)
+                {
+                    Plugin.DbgLog($"CAPTURE: key press '{KeyNames.ToShortName(path)}' ({Event.current.keyCode}) at frame {currentFrame}");
+                    AddKeyToSpan(path, heldKeys, currentFrame);
+                    Event.current.Use();
+                }
+            }
+
+            rowY += boxH + 6;
+
+            // Add key picker button
+            float pickerBtnH = 22;
+            if (GUI.Button(new Rect(x, rowY, w, pickerBtnH),
+                pickerOpen ? "\u25BC Add key from list (open)" : "\u25B6 Add key from list\u2026"))
+            {
+                pickerOpen = !pickerOpen;
+                Plugin.DbgLog($"BTN: Picker toggled to {(pickerOpen ? "open" : "closed")}");
+                pickerFilter = "";
+                pickerScroll = Vector2.zero;
+            }
+            rowY += pickerBtnH + 4;
+
+            // Scope radio
+            DrawScopeRadio(x, rowY, w);
+        }
+
+        private void DrawScopeRadio(float x, float y, float w)
+        {
+            var lblStyle = new GUIStyle(GUI.skin.label) { fontSize = 10 };
+            lblStyle.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
+            GUI.Label(new Rect(x, y, w, 14), "Scope:", lblStyle);
+
+            float ry = y + 14;
+            bool fromHere = editScope == EditScope.FromHere;
+            bool newFromHere = GUI.Toggle(new Rect(x, ry, w, 16), fromHere, " From this frame onward");
+            if (newFromHere && !fromHere) { editScope = EditScope.FromHere; Plugin.DbgLog("BTN: Scope changed to FromHere"); }
+
+            bool thisOnly = editScope == EditScope.ThisFrameOnly;
+            bool newThisOnly = GUI.Toggle(new Rect(x, ry + 16, w, 16), thisOnly, " This frame only");
+            if (newThisOnly && !thisOnly) { editScope = EditScope.ThisFrameOnly; Plugin.DbgLog("BTN: Scope changed to ThisFrameOnly"); }
+        }
+
+        private void DrawEditControls(float x, float y, float w, float h,
+                                       ReplayPlayback playback, int currentFrame)
+        {
+            var labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 11 };
+            labelStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
+            GUI.Label(new Rect(x, y, w, 14), "Actions:", labelStyle);
+
+            float btnH = 22;
+            float gap = 4;
+            float colY = y + 18;
+            float half = (w - gap) / 2f;
+
+            bool canUndo = editSession.CanUndo;
+            bool canRedo = editSession.CanRedo;
+
+            GUI.enabled = canUndo;
+            if (GUI.Button(new Rect(x, colY, half, btnH), "Undo"))
+            {
+                Plugin.DbgLog($"BTN: Undo (stack depth={editSession.UndoDepth})");
+                editSession.Undo();
+                PrecomputeReplayGhosts();
+            }
+            GUI.enabled = canRedo;
+            if (GUI.Button(new Rect(x + half + gap, colY, half, btnH), "Redo"))
+            {
+                Plugin.DbgLog($"BTN: Redo (stack depth={editSession.RedoDepth})");
+                editSession.Redo();
+                PrecomputeReplayGhosts();
+            }
+            GUI.enabled = true;
+            colY += btnH + gap;
+
+            // Re-verify (only enabled when dirty)
+            GUI.enabled = editSession.IsDirty;
+            var prevBg = GUI.backgroundColor;
+            if (editSession.IsDirty) GUI.backgroundColor = new Color(0.9f, 0.7f, 0.2f);
+            if (GUI.Button(new Rect(x, colY, w, btnH), "Re-verify from dirty"))
+            {
+                int from = editSession.DirtyFromFrame;
+                Plugin.DbgLog($"BTN: Re-verify from frame {from}");
+                playback.BeginReverifyFromFrame(from);
+            }
+            GUI.backgroundColor = prevBg;
+            GUI.enabled = true;
+            colY += btnH + gap;
+
+            // Save As (blocked while dirty)
+            GUI.enabled = !editSession.IsDirty;
+            if (GUI.Button(new Rect(x, colY, w, btnH), "Save As new file"))
+            {
+                try
+                {
+                    string saved = editSession.SaveAsNext();
+                    Plugin.Instance?.ShowToast($"Saved: {Path.GetFileName(saved)}");
+                    Plugin.DbgLog($"BTN: Save As -> {saved}");
+                }
+                catch (System.Exception ex)
+                {
+                    Plugin.Instance?.ShowToast("Save failed: " + ex.Message);
+                    Plugin.DbgLog($"Save As failed: {ex}");
+                }
+            }
+            GUI.enabled = true;
+            colY += btnH + gap;
+
+            // Discard edits — reloads from disk
+            prevBg = GUI.backgroundColor;
+            GUI.backgroundColor = new Color(0.7f, 0.3f, 0.3f);
+            if (GUI.Button(new Rect(x, colY, w, btnH), "Discard edits"))
+            {
+                Plugin.DbgLog("BTN: Discard edits");
+                DiscardEditsAndReload(playback);
+            }
+            GUI.backgroundColor = prevBg;
+
+            // Draw the picker popup LAST so it overlays everything else in the panel.
+            if (pickerOpen)
+                DrawAddKeyPicker(currentFrame);
+        }
+
+        private void DrawAddKeyPicker(int currentFrame)
+        {
+            // Popup: draw on top, filling a big chunk of the screen bottom so it
+            // doesn't collide with the transport bar. Keys already held are
+            // greyed out.
+            float popupW = Mathf.Min(520f, Screen.width - 40f);
+            float popupH = 260f;
+            float popupX = (Screen.width - popupW) / 2f;
+            float popupY = Screen.height - TimelineHeight - TimelinePadding - TransportHeight - 2f - EditPanelHeight - popupH - 14f;
+
+            GUI.DrawTexture(new Rect(popupX, popupY, popupW, popupH), timelineBgTex);
+            DrawBorder(new Rect(popupX, popupY, popupW, popupH), new Color(0.3f, 0.9f, 1f));
+
+            var titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, fontStyle = FontStyle.Bold };
+            titleStyle.normal.textColor = Color.white;
+            GUI.Label(new Rect(popupX + 10, popupY + 6, popupW - 60, 18), "Add key (bound keys first)", titleStyle);
+
+            if (GUI.Button(new Rect(popupX + popupW - 46, popupY + 4, 40, 20), "Close"))
+            {
+                Plugin.DbgLog("BTN: Picker closed");
+                pickerOpen = false;
+            }
+
+            // Filter box
+            GUI.SetNextControlName("PickerFilter");
+            pickerFilter = GUI.TextField(new Rect(popupX + 10, popupY + 28, popupW - 20, 22), pickerFilter ?? "");
+
+            // Build ordered list: game-bound keys first, then everything else.
+            var heldKeys = editSession.GetKeysAtFrame(currentFrame);
+            var ordered = BuildPickerOrder(currentFrame);
+
+            string filter = (pickerFilter ?? "").Trim().ToLowerInvariant();
+
+            // Scrollable body
+            var scrollRect = new Rect(popupX + 10, popupY + 56, popupW - 20, popupH - 66);
+            int visibleCount = 0;
+            foreach (var entry in ordered)
+            {
+                if (!string.IsNullOrEmpty(filter) &&
+                    !KeyNames.ToShortName(entry.Path).ToLowerInvariant().Contains(filter) &&
+                    !entry.Path.ToLowerInvariant().Contains(filter))
+                    continue;
+                visibleCount++;
+            }
+
+            float rowH = 22;
+            var viewRect = new Rect(0, 0, scrollRect.width - 18, visibleCount * rowH + 2);
+            pickerScroll = GUI.BeginScrollView(scrollRect, pickerScroll, viewRect);
+
+            float rowY = 0;
+            foreach (var entry in ordered)
+            {
+                string shortName = KeyNames.ToShortName(entry.Path);
+                if (!string.IsNullOrEmpty(filter) &&
+                    !shortName.ToLowerInvariant().Contains(filter) &&
+                    !entry.Path.ToLowerInvariant().Contains(filter))
+                    continue;
+
+                bool already = heldKeys.Contains(entry.Path);
+                GUI.enabled = !already;
+
+                string label = shortName;
+                if (!string.IsNullOrEmpty(entry.Action)) label += $"   ({entry.Action})";
+                if (already) label += "   [held]";
+
+                if (GUI.Button(new Rect(2, rowY, viewRect.width - 4, rowH - 2), label))
+                {
+                    Plugin.DbgLog($"PICKER: selected '{KeyNames.ToShortName(entry.Path)}' at frame {currentFrame}");
+                    AddKeyToSpan(entry.Path, heldKeys, currentFrame);
+                    pickerOpen = false;
+                }
+                GUI.enabled = true;
+                rowY += rowH;
+            }
+            GUI.EndScrollView();
+        }
+
+        private struct PickerEntry
+        {
+            public string Path;
+            public string Action; // "" if not a bound action
+        }
+
+        private List<PickerEntry> BuildPickerOrder(int currentFrame)
+        {
+            var result = new List<PickerEntry>();
+            var seen = new HashSet<string>();
+
+            // 1. Bound keys first, grouped by action in declaration order.
+            var bindings = editSession.GetBindingsAtFrame(currentFrame);
+            if (bindings.ActionKeys != null)
+            {
+                // Move/Jump/Dash first, then any extras.
+                var actionOrder = new List<string>();
+                foreach (var preferred in new[] { "Move", "Jump", "Dash" })
+                    if (bindings.ActionKeys.ContainsKey(preferred)) actionOrder.Add(preferred);
+                foreach (var kv in bindings.ActionKeys)
+                    if (!actionOrder.Contains(kv.Key)) actionOrder.Add(kv.Key);
+
+                foreach (var action in actionOrder)
+                {
+                    foreach (var path in bindings.ActionKeys[action])
+                    {
+                        if (string.IsNullOrEmpty(path)) continue;
+                        if (seen.Add(path))
+                            result.Add(new PickerEntry { Path = path, Action = action });
+                    }
+                }
+            }
+
+            // 2. Everything else from the static registry.
+            foreach (var path in KeyNames.AllPaths())
+            {
+                if (seen.Add(path))
+                    result.Add(new PickerEntry { Path = path, Action = "" });
+            }
+            return result;
+        }
+
+        private void AddKeyToSpan(string keyPath, HashSet<string> heldKeys, int currentFrame)
+        {
+            if (heldKeys.Contains(keyPath))
+            {
+                Plugin.DbgLog($"AddKeyToSpan: '{KeyNames.ToShortName(keyPath)}' already held at frame {currentFrame}, no-op");
+                captureBoxFeedback = $"{KeyNames.ToShortName(keyPath)} already held";
+                captureBoxFeedbackEndTime = Time.unscaledTime + 1.5f;
+                return;
+            }
+            Plugin.DbgLog($"AddKeyToSpan: adding '{KeyNames.ToShortName(keyPath)}' at frame {currentFrame} scope={editScope}");
+            var newSet = new HashSet<string>(heldKeys) { keyPath };
+            editSession.SetHeldKeysAt(currentFrame, newSet, editScope);
+            PrecomputeReplayGhosts();
+            captureBoxFeedback = $"+ {KeyNames.ToShortName(keyPath)}";
+            captureBoxFeedbackEndTime = Time.unscaledTime + 1.5f;
+        }
+
+        private void DiscardEditsAndReload(ReplayPlayback playback)
+        {
+            if (string.IsNullOrEmpty(OriginalLoadPath)) return;
+            try
+            {
+                var reloaded = ReplayFormat.Read(OriginalLoadPath);
+                // Swap the in-memory ReplayFile everywhere it matters.
+                replayFile = reloaded;
+                editSession = new ReplayEditSession(reloaded, OriginalLoadPath, player);
+                PrecomputeReplayGhosts();
+
+                // Restart playback bound to the reloaded file from frame 0.
+                playback.StopPlayback();
+                playback.StartPlayback(player, reloaded);
+                Plugin.Instance?.ShowToast("Edits discarded — reloaded from disk");
+            }
+            catch (System.Exception ex)
+            {
+                Plugin.Instance?.ShowToast("Discard failed: " + ex.Message);
+                Plugin.DbgLog($"DiscardEditsAndReload failed: {ex}");
+            }
+        }
+
+        private void DrawReverifyOverlay(ReplayPlayback playback)
+        {
+            float w = Mathf.Min(Screen.width - 40f, 560f);
+            float h = 70f;
+            float panelX = (Screen.width - w) / 2f;
+            float panelY = Screen.height - TimelineHeight - TimelinePadding - TransportHeight - 2f - h - 6f;
+
+            EnsureTimelineStyles();
+            GUI.DrawTexture(new Rect(panelX, panelY, w, h), timelineBgTex);
+            DrawBorder(new Rect(panelX, panelY, w, h), new Color(0.9f, 0.7f, 0.2f));
+
+            int lastFrame = replayFile.Spans.Count > 0
+                ? replayFile.Spans[replayFile.Spans.Count - 1].Frame
+                : 1;
+            int cur = playback.FrameCount;
+            float frac = lastFrame > 0 ? Mathf.Clamp01((float)cur / lastFrame) : 0f;
+
+            var titleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 13,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+            };
+            titleStyle.normal.textColor = new Color(1f, 0.85f, 0.3f);
+            GUI.Label(new Rect(panelX, panelY + 6, w, 18),
+                "RE-VERIFYING — controls locked", titleStyle);
+
+            var subStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                alignment = TextAnchor.MiddleCenter,
+            };
+            subStyle.normal.textColor = Color.white;
+            GUI.Label(new Rect(panelX, panelY + 24, w, 14),
+                $"frame {cur} / {lastFrame}", subStyle);
+
+            // Progress bar
+            float barPad = 20f;
+            var barBgRect = new Rect(panelX + barPad, panelY + 44, w - barPad * 2, 14);
+            GUI.color = new Color(0.2f, 0.2f, 0.2f, 1f);
+            GUI.DrawTexture(barBgRect, timelineWhiteTex);
+            GUI.color = new Color(0.9f, 0.7f, 0.2f);
+            GUI.DrawTexture(new Rect(barBgRect.x, barBgRect.y, barBgRect.width * frac, barBgRect.height),
+                timelineWhiteTex);
+            GUI.color = Color.white;
+        }
+
+        private static void DrawBorder(Rect rect, Color color)
+        {
+            var prev = GUI.color;
+            GUI.color = color;
+            // Use the white timeline texture if available, otherwise GUI.skin.box
+            var tex = Texture2D.whiteTexture;
+            GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, 1), tex);
+            GUI.DrawTexture(new Rect(rect.x, rect.y + rect.height - 1, rect.width, 1), tex);
+            GUI.DrawTexture(new Rect(rect.x, rect.y, 1, rect.height), tex);
+            GUI.DrawTexture(new Rect(rect.x + rect.width - 1, rect.y, 1, rect.height), tex);
+            GUI.color = prev;
+        }
+
+        /// <summary>
+        /// Map a Unity KeyCode (from IMGUI Event.current.keyCode) to the canonical
+        /// InputSystem path format used by replay files (e.g. "&lt;Keyboard&gt;/a").
+        /// Returns null for keycodes we don't have a stable path for.
+        /// </summary>
+        private static string KeyCodeToInputPath(KeyCode kc)
+        {
+            if (kc >= KeyCode.A && kc <= KeyCode.Z)
+                return "<Keyboard>/" + char.ToLower((char)('A' + (kc - KeyCode.A)));
+            if (kc >= KeyCode.Alpha0 && kc <= KeyCode.Alpha9)
+                return "<Keyboard>/" + (kc - KeyCode.Alpha0).ToString();
+            if (kc >= KeyCode.F1 && kc <= KeyCode.F12)
+                return "<Keyboard>/f" + (1 + (kc - KeyCode.F1));
+            switch (kc)
+            {
+                case KeyCode.Space: return "<Keyboard>/space";
+                case KeyCode.Return: return "<Keyboard>/enter";
+                case KeyCode.KeypadEnter: return "<Keyboard>/enter";
+                case KeyCode.Escape: return "<Keyboard>/escape";
+                case KeyCode.Tab: return "<Keyboard>/tab";
+                case KeyCode.Backspace: return "<Keyboard>/backspace";
+                case KeyCode.LeftShift: return "<Keyboard>/leftShift";
+                case KeyCode.RightShift: return "<Keyboard>/rightShift";
+                case KeyCode.LeftControl: return "<Keyboard>/leftCtrl";
+                case KeyCode.RightControl: return "<Keyboard>/rightCtrl";
+                case KeyCode.LeftAlt: return "<Keyboard>/leftAlt";
+                case KeyCode.RightAlt: return "<Keyboard>/rightAlt";
+                case KeyCode.LeftArrow: return "<Keyboard>/leftArrow";
+                case KeyCode.RightArrow: return "<Keyboard>/rightArrow";
+                case KeyCode.UpArrow: return "<Keyboard>/upArrow";
+                case KeyCode.DownArrow: return "<Keyboard>/downArrow";
+                case KeyCode.Delete: return "<Keyboard>/delete";
+                case KeyCode.Insert: return "<Keyboard>/insert";
+                case KeyCode.Home: return "<Keyboard>/home";
+                case KeyCode.End: return "<Keyboard>/end";
+                case KeyCode.PageUp: return "<Keyboard>/pageUp";
+                case KeyCode.PageDown: return "<Keyboard>/pageDown";
+                case KeyCode.Comma: return "<Keyboard>/comma";
+                case KeyCode.Period: return "<Keyboard>/period";
+                case KeyCode.Slash: return "<Keyboard>/slash";
+                case KeyCode.Backslash: return "<Keyboard>/backslash";
+                case KeyCode.Semicolon: return "<Keyboard>/semicolon";
+                case KeyCode.Quote: return "<Keyboard>/quote";
+                case KeyCode.LeftBracket: return "<Keyboard>/leftBracket";
+                case KeyCode.RightBracket: return "<Keyboard>/rightBracket";
+                case KeyCode.Minus: return "<Keyboard>/minus";
+                case KeyCode.Equals: return "<Keyboard>/equals";
+                case KeyCode.BackQuote: return "<Keyboard>/backquote";
+                case KeyCode.CapsLock: return "<Keyboard>/capsLock";
+            }
+            return null;
         }
 
         private void OnDestroy()
