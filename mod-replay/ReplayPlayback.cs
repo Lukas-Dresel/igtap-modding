@@ -75,6 +75,13 @@ namespace IGTAPReplay
         private bool pendingRestoreSeek;
         private int pendingRestoreSeekTarget;
 
+        // Pending fast-seek: consumed at the top of PostMovementUpdate when
+        // source and target trail entries share identical contact signatures.
+        // Snaps body pos/vel from the trail, updates indices, pauses. No
+        // checkpoint restore, no warmup — safe because Box2D's contact state
+        // doesn't need to be rebuilt when the set of touching colliders matches.
+        private int pendingFastSeekTarget = -1;
+
         // Warmup state: while > 0, Movement.Update + FixedUpdate run normally
         // (inputs are injected, gravity applies, contacts form). PostMovementUpdate
         // force-snaps body.position/linearVelocity back to the live trail each
@@ -94,14 +101,48 @@ namespace IGTAPReplay
         //
         // Invalidated (truncated) by ReplayPlayback.InvalidateTrailFrom when an
         // edit happens. Not persisted to disk — rebuilt as playback progresses.
-        private struct BodyTrailEntry { public Vector2 Pos; public Vector2 Vel; }
+        private struct BodyTrailEntry
+        {
+            public Vector2 Pos;
+            public Vector2 Vel;
+            public int[] ContactIds; // sorted ascending; null for no contacts
+        }
         private readonly List<BodyTrailEntry> liveTrail = new List<BodyTrailEntry>();
         private int liveTrailValidThrough = -1;
+        private static readonly ContactPoint2D[] s_contactBuf = new ContactPoint2D[32];
 
-        private void WriteTrail(int frame, Vector2 pos, Vector2 vel)
+        private static int[] CaptureContactIds(Rigidbody2D body)
+        {
+            int n = body.GetContacts(s_contactBuf);
+            if (n == 0) return null;
+            var ids = new int[n];
+            for (int i = 0; i < n; i++)
+            {
+                var other = s_contactBuf[i].collider;
+                ids[i] = other != null ? other.GetInstanceID() : 0;
+            }
+            System.Array.Sort(ids);
+            return ids;
+        }
+
+        private static bool ContactIdsEqual(int[] a, int[] b)
+        {
+            int la = a?.Length ?? 0;
+            int lb = b?.Length ?? 0;
+            if (la != lb) return false;
+            for (int i = 0; i < la; i++) if (a[i] != b[i]) return false;
+            return true;
+        }
+
+        private void WriteTrail(int frame, Rigidbody2D body)
         {
             while (liveTrail.Count <= frame) liveTrail.Add(default);
-            liveTrail[frame] = new BodyTrailEntry { Pos = pos, Vel = vel };
+            liveTrail[frame] = new BodyTrailEntry
+            {
+                Pos = body.position,
+                Vel = body.linearVelocity,
+                ContactIds = CaptureContactIds(body),
+            };
             if (frame > liveTrailValidThrough) liveTrailValidThrough = frame;
         }
 
@@ -303,6 +344,24 @@ namespace IGTAPReplay
             finished = false;
 
             Plugin.DbgLog($"SeekToFrame target={targetFrame} current={frameCounter}");
+
+            // Fast path: if source and target are both in the live trail AND
+            // the set of touching colliders is identical, Box2D's contact state
+            // doesn't need to be rebuilt. Skip restore+warmup and just snap
+            // body pos/vel from the trail.
+            if (targetFrame < frameCounter &&
+                frameCounter >= 0 && frameCounter <= liveTrailValidThrough &&
+                targetFrame >= 0 && targetFrame <= liveTrailValidThrough &&
+                ContactIdsEqual(liveTrail[frameCounter].ContactIds, liveTrail[targetFrame].ContactIds))
+            {
+                pendingFastSeekTarget = targetFrame;
+                pendingRestoreFrame = -1;
+                seeking = false;
+                paused = false;
+                Time.timeScale = 1f;
+                Plugin.DbgLog($"SeekToFrame FAST source={frameCounter} target={targetFrame} contactIds match (n={liveTrail[targetFrame].ContactIds?.Length ?? 0})");
+                return;
+            }
 
             if (targetFrame <= frameCounter)
             {
@@ -548,6 +607,53 @@ namespace IGTAPReplay
         {
             if (!playing || player == null) return;
 
+            // Pending fast-seek: contact set is stable between source and
+            // target, so no restore/warmup is needed. Just snap body and
+            // indices, then pause.
+            if (pendingFastSeekTarget >= 0)
+            {
+                int t = pendingFastSeekTarget;
+                pendingFastSeekTarget = -1;
+
+                var fsBody = (Rigidbody2D)ReplayState.F_body.GetValue(player);
+                var entry = liveTrail[t];
+                var wasInterp = fsBody.interpolation;
+                fsBody.interpolation = RigidbodyInterpolation2D.None;
+                fsBody.position = entry.Pos;
+                fsBody.linearVelocity = entry.Vel;
+                player.transform.position = new Vector3(entry.Pos.x, entry.Pos.y, player.transform.position.z);
+                fsBody.interpolation = wasInterp;
+
+                frameCounter = t;
+                spanIndex = 0;
+                for (int i = replayFile.Spans.Count - 1; i >= 0; i--)
+                {
+                    if (replayFile.Spans[i].Frame <= t) { spanIndex = i; break; }
+                }
+                verifyIndex = 0;
+                for (int i = 0; i < replayFile.VerifyPoints.Count; i++)
+                {
+                    if (replayFile.VerifyPoints[i].Frame <= t) verifyIndex = i + 1;
+                    else break;
+                }
+                checkpointIndex = 0;
+                for (int i = 0; i < replayFile.Checkpoints.Count; i++)
+                {
+                    if (replayFile.Checkpoints[i].Frame <= t) checkpointIndex = i + 1;
+                    else break;
+                }
+
+                finished = false;
+                seeking = false;
+                paused = true;
+                Time.timeScale = 0f;
+                Plugin.DbgLog($"PostMovementUpdate FAST-SEEK fc={frameCounter} pos={entry.Pos} vel={entry.Vel}");
+
+                var fsEditor = FindAnyObjectByType<ReplayEditor>();
+                if (fsEditor != null) fsEditor.OnPlaybackFrame(frameCounter, player);
+                return;
+            }
+
             // Pending restore: Movement.Update already ran (with whatever state
             // was there — we don't care, we're about to overwrite it). Restore
             // here in postfix so the next FixedUpdate naturally integrates from
@@ -641,10 +747,11 @@ namespace IGTAPReplay
             Plugin.DbgLog($"PLAY-POST fc={frameCounter} :: {ReplayState.DumpAllFields(player)}");
 
             // Record body state into the live trail. This is what warmup-driven
-            // seeks read from to scripted-move the body during kinematic warmup.
+            // seeks read from to scripted-move the body, and what fast-path
+            // seeks compare contact signatures against.
             {
                 var trailBody = (Rigidbody2D)ReplayState.F_body.GetValue(player);
-                WriteTrail(frameCounter, trailBody.position, trailBody.linearVelocity);
+                WriteTrail(frameCounter, trailBody);
             }
 
             // Validate checkpoints and capture reverify points AFTER Movement.Update
