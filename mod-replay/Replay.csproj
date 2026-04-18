@@ -30,13 +30,13 @@
       <Private>false</Private>
     </Reference>
     <Reference Include="IGTAPMod">
-      <HintPath>$(BepInExDir)/plugins/IGTAPMod.dll</HintPath>
+      <HintPath>../mod/bin/Release/netstandard2.1/IGTAPMod.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <!-- Compile-time only; runtime dependency is soft (BepInDependency.SoftDependency).
          See SpeedrunBridge.cs — all type references use NoInlining to avoid loading if absent. -->
     <Reference Include="IGTAPSpeedrun">
-      <HintPath>$(BepInExDir)/plugins/IGTAPSpeedrun.dll</HintPath>
+      <HintPath>../mod-speedrun/bin/Release/netstandard2.1/IGTAPSpeedrun.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
