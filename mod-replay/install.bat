@@ -8,6 +8,8 @@ call "%~dp0..\mod\install.bat" "%GAME_DIR%"
 if errorlevel 1 exit /b 1
 call "%~dp0..\mod-fixedtimestep\install.bat" "%GAME_DIR%"
 if errorlevel 1 exit /b 1
+call "%~dp0..\mod-speedrun\install.bat" "%GAME_DIR%"
+if errorlevel 1 exit /b 1
 
 call "%~dp0build.bat"
 if errorlevel 1 exit /b 1

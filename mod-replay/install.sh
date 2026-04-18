@@ -10,6 +10,7 @@ ensure_bepinex "$GAME_DIR"
 # Install dependencies first
 bash "$SCRIPT_DIR/../mod/install.sh" "$GAME_DIR"
 bash "$SCRIPT_DIR/../mod-fixedtimestep/install.sh" "$GAME_DIR"
+bash "$SCRIPT_DIR/../mod-speedrun/install.sh" "$GAME_DIR"
 
 bash "$SCRIPT_DIR/build.sh"
 
