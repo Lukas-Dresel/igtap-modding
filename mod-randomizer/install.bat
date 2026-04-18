@@ -14,5 +14,5 @@ call "%~dp0build.bat"
 if errorlevel 1 exit /b 1
 
 mkdir "%PLUGINS_DIR%" 2>nul
-copy /y "%~dp0bin\Release\netstandard2.1\IGTAPFreeplay.dll" "%PLUGINS_DIR%\"
-echo Installed IGTAPFreeplay.dll
+copy /y "%~dp0bin\Release\netstandard2.1\IGTAPRandomizer.dll" "%PLUGINS_DIR%\"
+echo Installed IGTAPRandomizer.dll
