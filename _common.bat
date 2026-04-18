@@ -42,19 +42,25 @@ set "ZIP_NAME=BepInEx_win_x64_%BEPINEX_VERSION%.zip"
 set "URL=https://github.com/BepInEx/BepInEx/releases/download/v%BEPINEX_VERSION%/%ZIP_NAME%"
 set "TMP_ZIP=%GAME_DIR%\%ZIP_NAME%"
 
-where curl >nul 2>&1
-if %errorlevel%==0 (
-    curl -fSL -o "%TMP_ZIP%" "%URL%"
-) else (
-    powershell -Command "Invoke-WebRequest -Uri '%URL%' -OutFile '%TMP_ZIP%'"
-)
+REM NOTE: Paths may contain apostrophes (e.g. "That's") and parens ("(x86)").
+REM Use goto instead of if/else blocks to avoid parens closing blocks early,
+REM and pass paths to PowerShell via env vars to avoid apostrophe quoting bugs.
 
+where curl >nul 2>&1
+if errorlevel 1 goto :ps_download
+curl -fSL -o "%TMP_ZIP%" "%URL%"
+goto :after_download
+
+:ps_download
+powershell -NoProfile -Command "Invoke-WebRequest -Uri $env:URL -OutFile $env:TMP_ZIP"
+
+:after_download
 if not exist "%TMP_ZIP%" (
     echo ERROR: Download failed.
     exit /b 1
 )
 
-powershell -Command "Expand-Archive -Force '%TMP_ZIP%' '%GAME_DIR%'"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath $env:TMP_ZIP -DestinationPath $env:GAME_DIR -Force"
 del "%TMP_ZIP%"
 mkdir "%PLUGINS_DIR%" 2>nul
 echo BepInEx installed.
