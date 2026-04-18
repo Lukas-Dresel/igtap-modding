@@ -5,8 +5,14 @@
     <NoWarn>$(NoWarn);CS1701;CS1702</NoWarn>
   </PropertyGroup>
 
-  <!-- Resolve game paths -->
+  <!-- Resolve game paths.
+       Priority: explicit /p:GameDir > GAME_DIR env var > OS default.
+       build.bat/.sh set GAME_DIR before invoking dotnet so the env var path
+       is the normal case on all platforms. The OS defaults are last-resort
+       fallbacks for IDE / direct dotnet build invocations. -->
   <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == '' And '$(GAME_DIR)' != ''">$(GAME_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == '' And '$(OS)' == 'Windows_NT'">C:\Program Files (x86)\Steam\steamapps\common\IGTAP an Incremental Game That's Also a Platformer Demo</GameDir>
     <GameDir Condition="'$(GameDir)' == ''">$(HOME)/.steam/steam/steamapps/common/IGTAP an Incremental Game That's Also a Platformer Demo</GameDir>
     <BepInExDir Condition="'$(BepInExDir)' == ''">$(GameDir)/BepInEx</BepInExDir>
     <ManagedDir Condition="'$(ManagedDir)' == ''">$(GameDir)/IGTAP_Data/Managed</ManagedDir>
