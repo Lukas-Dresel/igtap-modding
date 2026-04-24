@@ -3,4 +3,15 @@
     <AssemblyName>IGTAPFixedTimestep</AssemblyName>
     <Description>Lock deltaTime to a fixed value for deterministic physics</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(ManagedDir)/UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="IGTAPMod">
+      <HintPath>../mod/bin/Release/netstandard2.1/IGTAPMod.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
 </Project>
