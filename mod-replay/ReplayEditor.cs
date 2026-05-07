@@ -1028,7 +1028,9 @@ namespace IGTAPReplay
             { Plugin.DbgLog("BTN: >>| (fwd 1s)"); StepFrames(timestep); }
             x += btnW + gap * 3;
 
-            // Speed selector
+            // Speed selector: only ≤1x is safe. Slowdown works by skipping
+            // Movement.Update on frames where FixedUpdate hasn't fired, preserving
+            // the 1:1 Update:FixedUpdate pairing. >1x would need manual tick-driving.
             GUI.Label(new Rect(x, barY, 40, btnH), "Speed:");
             x += 44f;
 
@@ -1041,6 +1043,9 @@ namespace IGTAPReplay
                 var prevBg = GUI.backgroundColor;
                 if (isActive) GUI.backgroundColor = Color.yellow;
 
+                bool wasPrevEnabled = GUI.enabled;
+                if (spd > 1f) GUI.enabled = false;
+
                 string label = spd >= 1f ? $"{spd:0}x" : $"{spd:0.##}x";
                 if (GUI.Button(new Rect(x, barY, speedBtnW, btnH), label, speedStyle))
                 {
@@ -1049,6 +1054,7 @@ namespace IGTAPReplay
                     if (!paused) Time.timeScale = spd;
                 }
 
+                GUI.enabled = wasPrevEnabled;
                 GUI.backgroundColor = prevBg;
                 x += speedBtnW + 2f;
             }

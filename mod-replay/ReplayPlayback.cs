@@ -39,6 +39,7 @@ namespace IGTAPReplay
         private bool finished;
         private bool paused;
         private Vector2 lastMousePos;
+        private bool replayHasMousePositions;
         private HashSet<string> prevInjectedKeys = new HashSet<string>();
 
         // Seeking
@@ -164,6 +165,16 @@ namespace IGTAPReplay
         private bool pendingUnpause;
         private int pendingPauseOnFrame;
 
+        // Slowdown gating: at timeScale < 1, FixedUpdate fires less often than
+        // Update. We skip Movement.Update on frames where FixedUpdate hasn't run,
+        // preserving the 1:1 Update:FixedUpdate pairing from the recording.
+        private bool fixedUpdateRanSinceLastInject;
+
+        private void FixedUpdate()
+        {
+            if (playing) fixedUpdateRanSinceLastInject = true;
+        }
+
         /// <summary>
         /// Called from Harmony prefix on Movement.Update. Returns false to skip the update.
         /// </summary>
@@ -215,6 +226,15 @@ namespace IGTAPReplay
                 Plugin.DbgLog("ShouldMovementUpdate: SKIPPED (dt=0)");
                 return false;
             }
+            // At slowdown (timeScale < 1), FixedUpdate doesn't fire every
+            // Update. Skip until it has — otherwise Movement.Update runs
+            // without a matching physics step, breaking the 1:1 pairing
+            // that the recording was made with.
+            if (Time.timeScale > 0f && Time.timeScale < 1f && !fixedUpdateRanSinceLastInject)
+            {
+                Plugin.DbgLog("ShouldMovementUpdate: SKIPPED (waiting for FixedUpdate at slowdown)");
+                return false;
+            }
             return true;
         }
 
@@ -259,7 +279,10 @@ namespace IGTAPReplay
             warmupFramesRemaining = 0;
             warmupUsingTrail = false;
 
-            lastMousePos = Vector2.zero;
+            replayHasMousePositions = file.Spans.Exists(s => s.MousePos.HasValue);
+            // Seed with real cursor position so Windows doesn't warp cursor to (0,0).
+            // Overwritten by recorded positions when the replay has them.
+            lastMousePos = replayHasMousePositions ? Vector2.zero : (Vector2)Input.mousePosition;
             prevInjectedKeys.Clear();
 
             // Remove real devices so they can't interfere during playback.
@@ -445,7 +468,7 @@ namespace IGTAPReplay
                         verifyIndex = i + 1;
                     else break;
                 }
-                lastMousePos = Vector2.zero;
+                lastMousePos = replayHasMousePositions ? Vector2.zero : (Vector2)Input.mousePosition;
                 // Reset checkpoint validation index
                 checkpointIndex = 0;
                 for (int i = 0; i < replayFile.Checkpoints.Count; i++)
@@ -465,7 +488,7 @@ namespace IGTAPReplay
                 spanIndex = 0;
                 verifyIndex = 0;
                 checkpointIndex = 0;
-                lastMousePos = Vector2.zero;
+                lastMousePos = replayHasMousePositions ? Vector2.zero : (Vector2)Input.mousePosition;
                 Log.LogInfo("Restored to initial state (no earlier checkpoint)");
             }
         }
@@ -488,6 +511,9 @@ namespace IGTAPReplay
                 Plugin.DbgLog($"InjectCurrentFrame SKIPPED fc={frameCounter} dt=0");
                 return;
             }
+
+            // Consumed the FixedUpdate signal — clear for next slowdown gate check.
+            fixedUpdateRanSinceLastInject = false;
 
             // FULL state dump at PREFIX ENTRY — what FixedUpdate left us with
             Plugin.DbgLog($"PLAY-PRE-ENTRY fc={frameCounter + 1} dt={Time.deltaTime:F4} :: {ReplayState.DumpAllFields(player)}");
@@ -895,6 +921,10 @@ namespace IGTAPReplay
             }
 
             // Queue state for ALL virtual devices every frame so transitions are detected.
+            // When no mouse positions are recorded, track the real cursor so Windows
+            // doesn't warp the OS cursor to a fixed position via QueueStateEvent.
+            if (!replayHasMousePositions)
+                lastMousePos = (Vector2)Input.mousePosition;
             mouseState.position = lastMousePos;
             InputSystem.QueueStateEvent(virtualKeyboard, keyboardState, InputState.currentTime);
             InputSystem.QueueStateEvent(virtualMouse, mouseState, InputState.currentTime);
